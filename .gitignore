@@ -1,0 +1,70 @@
+# IDE / Editor
+.idea/
+.vs/
+.vscode/
+!.vscode/extensions.json
+!.vscode/launch.json
+
+# Build directories
+build/
+cmake-build*/
+out/
+bin/
+lib/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+CTestTestfile.cmake
+
+# Visual Studio
+*.VC.db
+*.VC.opendb
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.md
+
+# Compiled binaries
+*.exe
+*.dll
+*.lib
+*.exp
+*.pdb
+*.idb
+*.ilk
+
+# Skyrim junk
+*.esp
+*.esm
+*.esl
+*.bsa
+SKSE/
+plugins/
+Data/*
+!Data/SKSE/
+Data/SKSE/*
+!Data/SKSE/Plugins/
+Data/SKSE/Plugins/*
+
+# Logs / temp
+*.log
+*.tlog
+*.tmp
+*.cache
+*.bat
+
+# Archives
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
