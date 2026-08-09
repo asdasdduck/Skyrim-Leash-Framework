@@ -506,8 +506,7 @@ namespace LeashFramework::UI::ModMenu {
                     } else if (const auto* plugin = dataHandler->LookupModByName(entry.modName); !plugin || plugin->GetCompileIndex() == 0xFF) {
                         armorStatus = std::format("Plugin {} is not loaded.", entry.modName);
                     } else {
-                        const auto resolvedFormID = plugin->IsLight() ? 0xFE000000 | static_cast<std::uint32_t>(plugin->GetSmallFileCompileIndex()) << 12 | (localFormID & 0xFFF)
-                                                                      : static_cast<std::uint32_t>(plugin->GetCompileIndex()) << 24 | (localFormID & 0xFFFFFF);
+                        const auto resolvedFormID = dataHandler->LookupFormID(localFormID, entry.modName);
                         auto* form = RE::TESForm::LookupByID(resolvedFormID);
                         if (!form) {
                             armorStatus = std::format("Could not find {}:{:X}; resolved runtime FormID {:08X}.", entry.modName, localFormID, resolvedFormID);
