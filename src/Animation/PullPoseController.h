@@ -1,7 +1,6 @@
 #pragma once
 
 #include <array>
-#include <span>
 #include <vector>
 
 #include "../PCH.h"
@@ -55,14 +54,14 @@ namespace LeashFramework::Animation {
             bool frozen{};
         };
 
-        void Prepare(State& a_state, RE::Actor& a_actor, RE::NiAVObject& a_attachment, float a_deltaTime, bool a_allowed);
+        void Prepare(State& a_state, RE::Actor& a_actor, const RE::NiPoint3& a_attachment, float a_deltaTime, bool a_allowed);
         void Transform(const State& a_state, const RE::NiAVObject& a_object, RE::NiPoint3& a_position, RE::NiMatrix3& a_rotation) const;
-        void Capture(State& a_state, std::span<const RE::NiPoint3> a_ropePositions, float a_distance, float a_minLength, float a_maxLength);
+        void Capture(State& a_state, const RE::NiPoint3& a_collar, const RE::NiPoint3& a_nextRopePoint, float a_distance, float a_minLength, float a_maxLength);
         void Apply(State& a_state, RE::Actor& a_actor);
         void Freeze(State& a_state);
         void Reset(State& a_state);
         [[nodiscard]] bool Bind(State& a_state, RE::Actor& a_actor);
-        void BuildPose(State& a_state, RE::NiAVObject& a_attachment);
+        void BuildPose(State& a_state, const RE::NiPoint3& a_attachment);
         void CaptureDeferredPose(State& a_state);
         void CaptureDeferredPose(State& a_state, RE::NiAVObject& a_object, std::size_t& a_index);
         void ApplyFrozenPose(State& a_state);

@@ -55,11 +55,32 @@ Bool Function ApplyLeashToHand(Actor holder, Actor leashed, String parentBone, S
 Connects a leash from an exact bone on a holder to leash bones on another actor.
 
 holderBone: Exact node name on the holder. This attachment does not alter the holder's hand pose.
+offsetX, offsetY, offsetZ: Optional local-space offset from holderBone. The offset follows the bone's
+translation, rotation, and scale, but does not add an attachment rotation.
 All other arguments and replacement behavior match ApplyLeash.
 
 Returns true when the arguments are valid and the leash is accepted.
 /;
-Bool Function ApplyLeashToBone(Actor holder, Actor leashed, String holderBone, String parentBone, String leashBoneMatch, Float minLength, Float maxLength, Bool persistent) Global Native
+Bool Function ApplyLeashToBone(Actor holder, Actor leashed, String holderBone, String parentBone, String leashBoneMatch, Float minLength, Float maxLength, Bool persistent, Float offsetX = 0.0, Float offsetY = 0.0, Float offsetZ = 0.0) Global Native
+
+;/
+Connects a leash mesh equipped by the holder to an exact bone on the leashed actor.
+
+The first ordered leash bone remains in its neutral animated pose on the holder. The last ordered leash
+bone attaches to leashedAttachmentBone.
+
+leashParentBone: Exact node name to find on the holder before searching its descendants for leash bones.
+leashedAttachmentBone: Exact node name on the leashed actor.
+attachmentOffsetX, attachmentOffsetY, attachmentOffsetZ: Optional local-space offset from
+leashedAttachmentBone. The offset follows the bone's translation, rotation, and scale, but does not add
+an attachment rotation.
+closedHand: Applies the closed-fist pose to the holder. 1 closes the right hand, 2 closes the left hand,
+and every other value leaves both hands unchanged.
+All other arguments and replacement behavior match ApplyLeash.
+
+Returns true when the arguments are valid and the leash is accepted.
+/;
+Bool Function ApplyHolderOwnedLeashToBone(Actor holder, Actor leashed, String leashedAttachmentBone, String leashParentBone, String leashBoneMatch, Float minLength, Float maxLength, Bool persistent, Float attachmentOffsetX = 0.0, Float attachmentOffsetY = 0.0, Float attachmentOffsetZ = 0.0, Int closedHand = 0) Global Native
 
 ;/
 Connects a holderless leash from a fixed position to leash bones on an actor.
@@ -79,7 +100,7 @@ Bool Function ApplyLeashAtPosition(Actor leashed, Cell anchorCell, Float x, Floa
 Disconnects the leash matching the specific holder and leashed actor.
 
 holder: Actor holding the leash. Pass None for a holderless world-position leash.
-leashed: Actor wearing the leash mesh.
+leashed: Actor connected as the leashed endpoint.
 
 Returns true when the matching leash was disconnected.
 /;

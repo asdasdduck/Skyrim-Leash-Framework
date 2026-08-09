@@ -134,67 +134,47 @@ namespace LeashFramework {
 
     }  // namespace
 
-    LeashAnchor::LeashAnchor(const LeashDefinition& a_definition) : _definition(a_definition) {
-        if (auto* holder = RE::TESForm::LookupByID<RE::Actor>(_definition.holderFormID)) {
-            _holder = holder->GetHandle();
+    LeashAnchor::LeashAnchor(const LeashDefinition& a_definition) : _definition(a_definition) {}
+
+    LeashAnchor::BindResult LeashAnchor::Bind(RE::Actor* a_attachmentActor, RE::Actor* a_holder) {
+        const auto result = std::visit(
+            [&](const auto& a_anchor) {
+                using Anchor = std::decay_t<decltype(a_anchor)>;
+                if constexpr (std::is_same_v<Anchor, WorldPositionAnchor>) {
+                    return Bind(a_anchor);
+                } else {
+                    return Bind(a_anchor, a_attachmentActor);
+                }
+            },
+            _definition.anchor);
+        if (result != BindResult::kFailed) {
+            BindHolderGrip(a_holder);
         }
+        return result;
     }
 
-    LeashAnchor::BindResult LeashAnchor::Bind() {
-        return std::visit([&](const auto& a_anchor) { return Bind(a_anchor); }, _definition.anchor);
+    LeashAnchor::BindResult LeashAnchor::Bind(const HandAnchor& a_anchor, RE::Actor* a_attachmentActor) {
+        _boundRoot.reset();
+        _anchorNode.reset();
+        _worldCell = nullptr;
+        const auto attachmentFormID = _definition.meshOwner == LeashMeshOwner::kHolder ? _definition.leashedFormID : _definition.holderFormID;
+        return BindHand(_attachmentHand, a_attachmentActor, attachmentFormID, a_anchor.rightHand, _bindingWarningLogged, "attachment actor");
     }
 
-    LeashAnchor::BindResult LeashAnchor::Bind(const HandAnchor& a_anchor) {
-        const auto& boneNames = a_anchor.rightHand ? kRightHandBones : kLeftHandBones;
-        auto* holder = ResolveHolder();
-        const auto resolved = holder ? ResolveActorNode(*holder, boneNames.hand) : ResolvedNode{};
-        const auto nodesAttached = _hand && IsDescendantOf(_hand.get(), resolved.root) && std::ranges::all_of(_fingers, [&](const auto& a_finger) {
-            return std::ranges::all_of(a_finger, [&](const auto& a_bone) { return !a_bone || IsDescendantOf(a_bone.get(), resolved.root); });
-        });
-        if (_boundRoot.get() == resolved.root && _hand.get() == resolved.object && nodesAttached && _fingers[kMiddleFinger][0]) {
-            return BindResult::kUnchanged;
-        }
-
-        Reset();
-        if (!holder || !resolved.root || !resolved.object) {
-            if (!_bindingWarningLogged) {
-                SKSE::log::warn("Unable to bind leash holder {:08X}: {} hand '{}' was not found", _definition.holderFormID, a_anchor.rightHand ? "right" : "left", boneNames.hand);
-                _bindingWarningLogged = true;
-            }
-            return BindResult::kFailed;
-        }
-
-        _boundRoot.reset(resolved.root);
-        _hand.reset(resolved.object);
-        for (std::size_t fingerIndex = 0; fingerIndex < boneNames.fingers.size(); ++fingerIndex) {
-            for (std::size_t boneIndex = 0; boneIndex < boneNames.fingers[fingerIndex].size(); ++boneIndex) {
-                _fingers[fingerIndex][boneIndex].reset(resolved.root->GetObjectByName(RE::BSFixedString(boneNames.fingers[fingerIndex][boneIndex])));
-            }
-        }
-        if (!_fingers[kMiddleFinger][0]) {
-            Reset();
-            if (!_bindingWarningLogged) {
-                SKSE::log::warn("Unable to bind leash holder {:08X}: grip anchor '{}' was not found", _definition.holderFormID, boneNames.fingers[kMiddleFinger][0]);
-                _bindingWarningLogged = true;
-            }
-            return BindResult::kFailed;
-        }
-
-        _bindingWarningLogged = false;
-        return BindResult::kChanged;
-    }
-
-    LeashAnchor::BindResult LeashAnchor::Bind(const ActorBoneAnchor& a_anchor) {
-        auto* holder = ResolveHolder();
-        const auto resolved = holder ? ResolveActorNode(*holder, a_anchor.boneName) : ResolvedNode{};
+    LeashAnchor::BindResult LeashAnchor::Bind(const ActorBoneAnchor& a_anchor, RE::Actor* a_attachmentActor) {
+        ResetHand(_attachmentHand);
+        _worldCell = nullptr;
+        const auto resolved = a_attachmentActor ? ResolveActorNode(*a_attachmentActor, a_anchor.boneName) : ResolvedNode{};
         if (_boundRoot.get() == resolved.root && _anchorNode.get() == resolved.object && _anchorNode && IsDescendantOf(_anchorNode.get(), resolved.root)) {
             return BindResult::kUnchanged;
         }
 
-        Reset();
-        if (!holder || !resolved.root || !resolved.object) {
+        _boundRoot.reset();
+        _anchorNode.reset();
+        if (!a_attachmentActor || !resolved.root || !resolved.object) {
             if (!_bindingWarningLogged) {
-                SKSE::log::warn("Unable to bind leash holder {:08X}: bone '{}' was not found", _definition.holderFormID, a_anchor.boneName);
+                const auto attachmentFormID = _definition.meshOwner == LeashMeshOwner::kHolder ? _definition.leashedFormID : _definition.holderFormID;
+                SKSE::log::warn("Unable to bind leash attachment actor {:08X}: bone '{}' was not found", attachmentFormID, a_anchor.boneName);
                 _bindingWarningLogged = true;
             }
             return BindResult::kFailed;
@@ -207,12 +187,15 @@ namespace LeashFramework {
     }
 
     LeashAnchor::BindResult LeashAnchor::Bind(const WorldPositionAnchor& a_anchor) {
+        ResetHand(_attachmentHand);
+        _boundRoot.reset();
+        _anchorNode.reset();
         auto* cell = RE::TESForm::LookupByID<RE::TESObjectCELL>(a_anchor.cellFormID);
         if (_worldCell == cell && cell) {
             return BindResult::kUnchanged;
         }
 
-        Reset();
+        _worldCell = nullptr;
         if (!cell) {
             if (!_bindingWarningLogged) {
                 SKSE::log::warn("Unable to bind world leash anchor: cell {:08X} was not found", a_anchor.cellFormID);
@@ -226,69 +209,110 @@ namespace LeashFramework {
         return BindResult::kChanged;
     }
 
-    RE::Actor* LeashAnchor::ResolveHolder() {
-        if (auto holder = _holder.get()) {
-            return holder.get();
+    LeashAnchor::BindResult LeashAnchor::BindHand(HandBinding& a_binding, RE::Actor* a_actor, RE::FormID a_actorFormID, bool a_rightHand, bool& a_warningLogged, std::string_view a_role) {
+        const auto& boneNames = a_rightHand ? kRightHandBones : kLeftHandBones;
+        const auto resolved = a_actor ? ResolveActorNode(*a_actor, boneNames.hand) : ResolvedNode{};
+        const auto nodesAttached = a_binding.hand && IsDescendantOf(a_binding.hand.get(), resolved.root) && std::ranges::all_of(a_binding.fingers, [&](const auto& a_finger) {
+            return std::ranges::all_of(a_finger, [&](const auto& a_bone) { return !a_bone || IsDescendantOf(a_bone.get(), resolved.root); });
+        });
+        if (a_binding.root.get() == resolved.root && a_binding.hand.get() == resolved.object && nodesAttached && a_binding.fingers[kMiddleFinger][0]) {
+            return BindResult::kUnchanged;
         }
-        auto* holder = RE::TESForm::LookupByID<RE::Actor>(_definition.holderFormID);
-        if (holder) {
-            _holder = holder->GetHandle();
+
+        ResetHand(a_binding);
+        if (!a_actor || !resolved.root || !resolved.object) {
+            if (!a_warningLogged) {
+                SKSE::log::warn("Unable to bind leash {} {:08X}: {} hand '{}' was not found", a_role, a_actorFormID, a_rightHand ? "right" : "left", boneNames.hand);
+                a_warningLogged = true;
+            }
+            return BindResult::kFailed;
         }
-        return holder;
+
+        a_binding.root.reset(resolved.root);
+        a_binding.hand.reset(resolved.object);
+        for (std::size_t fingerIndex = 0; fingerIndex < boneNames.fingers.size(); ++fingerIndex) {
+            for (std::size_t boneIndex = 0; boneIndex < boneNames.fingers[fingerIndex].size(); ++boneIndex) {
+                a_binding.fingers[fingerIndex][boneIndex].reset(resolved.root->GetObjectByName(RE::BSFixedString(boneNames.fingers[fingerIndex][boneIndex])));
+            }
+        }
+        if (!a_binding.fingers[kMiddleFinger][0]) {
+            ResetHand(a_binding);
+            if (!a_warningLogged) {
+                SKSE::log::warn("Unable to bind leash {} {:08X}: grip anchor '{}' was not found", a_role, a_actorFormID, boneNames.fingers[kMiddleFinger][0]);
+                a_warningLogged = true;
+            }
+            return BindResult::kFailed;
+        }
+
+        a_warningLogged = false;
+        return BindResult::kChanged;
     }
 
-    std::optional<LeashAnchor::Sample> LeashAnchor::GetSample() const {
+    void LeashAnchor::BindHolderGrip(RE::Actor* a_holder) {
+        if (_definition.closedHand == ClosedHand::kNone) {
+            ResetHand(_holderGrip);
+            _gripWarningLogged = false;
+            return;
+        }
+        const auto rightHand = _definition.closedHand == ClosedHand::kRight;
+        static_cast<void>(BindHand(_holderGrip, a_holder, _definition.holderFormID, rightHand, _gripWarningLogged, "holder grip"));
+    }
+
+    std::optional<LeashAnchor::Sample> LeashAnchor::GetSample(RE::Actor* a_attachmentActor) const {
         return std::visit(
             [&](const auto& a_anchor) -> std::optional<Sample> {
                 using Anchor = std::decay_t<decltype(a_anchor)>;
                 if constexpr (std::is_same_v<Anchor, HandAnchor>) {
-                    auto holder = _holder.get();
-                    if (!holder || !_hand || !_fingers[kMiddleFinger][0]) {
+                    if (!a_attachmentActor || !_attachmentHand.hand || !_attachmentHand.fingers[kMiddleFinger][0]) {
                         return std::nullopt;
                     }
-                    const auto position = _fingers[kMiddleFinger][0]->world.translate + _hand->world.rotate * kGripOffset * _hand->world.scale;
-                    return Sample{.position = position, .pullGoal = holder->GetPosition(), .cell = holder->GetParentCell()};
+                    const auto position = _attachmentHand.fingers[kMiddleFinger][0]->world.translate + _attachmentHand.hand->world.rotate * kGripOffset * _attachmentHand.hand->world.scale;
+                    return Sample{.position = position, .cell = a_attachmentActor->GetParentCell(), .poseReference = _attachmentHand.hand.get()};
                 } else if constexpr (std::is_same_v<Anchor, ActorBoneAnchor>) {
-                    auto holder = _holder.get();
-                    if (!holder || !_anchorNode) {
+                    if (!a_attachmentActor || !_anchorNode) {
                         return std::nullopt;
                     }
-                    return Sample{.position = _anchorNode->world.translate, .pullGoal = holder->GetPosition(), .cell = holder->GetParentCell()};
+                    const RE::NiPoint3 offset{a_anchor.offsetX, a_anchor.offsetY, a_anchor.offsetZ};
+                    const auto position = _anchorNode->world.translate + _anchorNode->world.rotate * offset * _anchorNode->world.scale;
+                    return Sample{.position = position, .cell = a_attachmentActor->GetParentCell(), .poseReference = _anchorNode.get()};
                 } else {
-                    return Sample{.position = {a_anchor.x, a_anchor.y, a_anchor.z}, .pullGoal = {a_anchor.x, a_anchor.y, a_anchor.z}, .cell = _worldCell};
+                    return Sample{.position = {a_anchor.x, a_anchor.y, a_anchor.z}, .cell = _worldCell};
                 }
             },
             _definition.anchor);
     }
 
     void LeashAnchor::ApplyPose() {
-        const auto* handAnchor = std::get_if<HandAnchor>(&_definition.anchor);
-        if (!handAnchor || !_hand) {
+        if (const auto* handAnchor = std::get_if<HandAnchor>(&_definition.anchor)) {
+            ApplyHandPose(_attachmentHand, handAnchor->rightHand);
+        }
+        if (_definition.closedHand != ClosedHand::kNone) {
+            ApplyHandPose(_holderGrip, _definition.closedHand == ClosedHand::kRight);
+        }
+    }
+
+    void LeashAnchor::ApplyHandPose(const HandBinding& a_binding, bool a_rightHand) const {
+        if (!a_binding.hand) {
             return;
         }
-        for (const auto& finger : _fingers) {
+        for (const auto& finger : a_binding.fingers) {
             if (std::ranges::contains(finger, nullptr)) {
                 return;
             }
         }
 
-        const auto& gripTransforms = handAnchor->rightHand ? kRightGripTransforms : kLeftGripTransforms;
-        for (std::size_t fingerIndex = 0; fingerIndex < _fingers.size(); ++fingerIndex) {
-            for (std::size_t boneIndex = 0; boneIndex < _fingers[fingerIndex].size(); ++boneIndex) {
+        const auto& gripTransforms = a_rightHand ? kRightGripTransforms : kLeftGripTransforms;
+        for (std::size_t fingerIndex = 0; fingerIndex < a_binding.fingers.size(); ++fingerIndex) {
+            for (std::size_t boneIndex = 0; boneIndex < a_binding.fingers[fingerIndex].size(); ++boneIndex) {
                 const auto& target = gripTransforms[fingerIndex][boneIndex];
                 const RE::NiMatrix3 targetRotation{target.rotation[0], target.rotation[1], target.rotation[2]};
-                auto* bone = _fingers[fingerIndex][boneIndex].get();
-                bone->world.translate = _hand->world * target.translate;
-                bone->world.rotate = _hand->world.rotate * targetRotation;
+                auto* bone = a_binding.fingers[fingerIndex][boneIndex].get();
+                bone->world.translate = a_binding.hand->world * target.translate;
+                bone->world.rotate = a_binding.hand->world.rotate * targetRotation;
             }
         }
     }
 
-    void LeashAnchor::Reset() {
-        _fingers = {};
-        _hand.reset();
-        _anchorNode.reset();
-        _boundRoot.reset();
-        _worldCell = nullptr;
-    }
+    void LeashAnchor::ResetHand(HandBinding& a_binding) { a_binding = {}; }
+
 }  // namespace LeashFramework

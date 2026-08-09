@@ -35,7 +35,7 @@ namespace LeashFramework {
     private:
         friend class LeashTeleportController;
 
-        [[nodiscard]] bool Bind(RE::Actor& a_leashed);
+        [[nodiscard]] bool Bind(RE::Actor& a_meshOwner);
         void ResetBinding();
         void ReadNeutralPose();
         void ApplyPose(std::span<const RE::NiPoint3> a_neutralPositions, std::span<const RE::NiMatrix3> a_neutralRotations);
@@ -50,8 +50,9 @@ namespace LeashFramework {
         Recovery::ForcedRecoveryController::State _recoveryState;
         Animation::PullPoseController::State _pullPoseState;
         LeashTeleportController::State _teleportState;
+        RE::ActorHandle _holder;
         RE::ActorHandle _leashed;
-        RE::NiPointer<RE::NiAVObject> _boundLeashedRoot;
+        RE::NiPointer<RE::NiAVObject> _boundMeshRoot;
         std::vector<RE::NiPointer<RE::NiAVObject>> _bones;
         std::vector<RE::NiPoint3> _neutralPositions;
         std::vector<RE::NiMatrix3> _neutralRotations;

@@ -87,6 +87,9 @@ namespace LeashFramework {
 
     LeashInstance::LeashInstance(LeashDefinition a_definition, PullController& a_pullController, Recovery::ForcedRecoveryController& a_recoveryController, Animation::PullPoseController& a_pullPoseController)
         : _definition(std::move(a_definition)), _anchor(_definition), _pullController(a_pullController), _recoveryController(a_recoveryController), _pullPoseController(a_pullPoseController) {
+        if (auto* holder = RE::TESForm::LookupByID<RE::Actor>(_definition.holderFormID)) {
+            _holder = holder->GetHandle();
+        }
         if (auto* leashed = RE::TESForm::LookupByID<RE::Actor>(_definition.leashedFormID)) {
             _leashed = leashed->GetHandle();
         }
@@ -117,17 +120,21 @@ namespace LeashFramework {
         }
 
         auto leashed = _leashed.get();
+        auto holder = _holder.get();
+        auto* attachmentActor = _definition.meshOwner == LeashMeshOwner::kHolder ? leashed.get() : holder.get();
         const auto invalidate = [&] {
             ReleaseControl();
             ResetSimulation();
             _exceeded = false;
         };
-        if (!leashed || !Bind(*leashed)) {
+        const auto holderOwnsMesh = _definition.meshOwner == LeashMeshOwner::kHolder;
+        auto* meshOwner = holderOwnsMesh ? holder.get() : leashed.get();
+        if (!leashed || !meshOwner || !Bind(*meshOwner)) {
             invalidate();
             return;
         }
 
-        const auto anchorBindResult = _anchor.Bind();
+        const auto anchorBindResult = _anchor.Bind(attachmentActor, holder.get());
         if (anchorBindResult == LeashAnchor::BindResult::kFailed) {
             invalidate();
             return;
@@ -137,8 +144,14 @@ namespace LeashFramework {
             ResetSimulation();
         }
         _anchor.ApplyPose();
-        const auto anchor = _anchor.GetSample();
-        if (!anchor || !CanSimulateTogether(anchor->cell, *leashed)) {
+        const auto anchor = _anchor.GetSample(attachmentActor);
+        if (!anchor) {
+            invalidate();
+            return;
+        }
+        const auto pullGoal = holder ? holder->GetPosition() : anchor->position;
+        auto* pullGoalCell = holder ? holder->GetParentCell() : anchor->cell;
+        if (!CanSimulateTogether(pullGoalCell, *leashed)) {
             invalidate();
             return;
         }
@@ -148,7 +161,9 @@ namespace LeashFramework {
             Movement::LogDirectLocomotionState(*leashed, "leash tick after bind");
         }
         ReadNeutralPose();
-        const auto anchorDistance = _neutralPositions.front().GetDistance(anchor->position);
+        const auto& collarAnchor = holderOwnsMesh ? anchor->position : _neutralPositions.front();
+        const auto& leasherAnchor = holderOwnsMesh ? _neutralPositions.front() : anchor->position;
+        const auto anchorDistance = collarAnchor.GetDistance(leasherAnchor);
         if (anchorDistance > _definition.maxLength) {
             if (!_exceeded) {
                 SKSE::log::info("Exceeded by {}", anchorDistance - _definition.maxLength);
@@ -160,29 +175,37 @@ namespace LeashFramework {
         if (!a_allowForcedRecovery) {
             _recoveryController.Release(_recoveryState);
         }
-        const auto forcedRecoveryActive = a_allowForcedRecovery && _recoveryController.Update(_recoveryState, *leashed, _neutralPositions.front(), anchor->position, anchor->pullGoal, _definition.maxLength, a_deltaTime);
+        const auto forcedRecoveryActive = a_allowForcedRecovery && _recoveryController.Update(_recoveryState, *leashed, collarAnchor, leasherAnchor, pullGoal, _definition.maxLength, a_deltaTime);
         if (forcedRecoveryActive) {
             _pullController.Release(_pullState, leashed.get());
         } else {
-            _pullController.Update(_pullState, *leashed, _neutralPositions.front(), anchor->pullGoal, anchor->cell, _definition.minLength, _definition.maxLength, a_deltaTime);
+            _pullController.Update(_pullState, *leashed, collarAnchor, pullGoal, pullGoalCell, _definition.minLength, _definition.maxLength, a_deltaTime);
         }
 
-        _pullPoseController.Prepare(_pullPoseState, *leashed, *_bones.front(), a_deltaTime, !forcedRecoveryActive);
+        _pullPoseController.Prepare(_pullPoseState, *leashed, collarAnchor, a_deltaTime, !forcedRecoveryActive);
         auto posedNeutralPositions = _neutralPositions;
         auto posedNeutralRotations = _neutralRotations;
         for (std::size_t index = 0; index < _bones.size(); ++index) {
             _pullPoseController.Transform(_pullPoseState, *_bones[index], posedNeutralPositions[index], posedNeutralRotations[index]);
         }
-        const auto& posedAnchor = posedNeutralPositions.front();
+        auto posedEndAnchor = anchor->position;
+        if (holderOwnsMesh && anchor->poseReference) {
+            auto posedEndRotation = anchor->poseReference->world.rotate;
+            _pullPoseController.Transform(_pullPoseState, *anchor->poseReference, posedEndAnchor, posedEndRotation);
+        }
+        const auto& posedCollarAnchor = holderOwnsMesh ? posedEndAnchor : posedNeutralPositions.front();
+        const auto& posedLeasherAnchor = holderOwnsMesh ? posedNeutralPositions.front() : posedEndAnchor;
 
         RE::bhkWorld* world{};
         if (auto* cell = leashed->GetParentCell()) {
             world = cell->GetbhkWorld();
         }
 
-        const auto& positions = _solver.Solve(posedNeutralPositions, _segmentLengths, anchor->position, a_deltaTime, world, a_actorCollision, a_settings);
-        if (!forcedRecoveryActive) {
-            _pullPoseController.Capture(_pullPoseState, positions, posedAnchor.GetDistance(anchor->position), _definition.minLength, _definition.maxLength);
+        const auto& positions = _solver.Solve(posedNeutralPositions, _segmentLengths, posedEndAnchor, a_deltaTime, world, a_actorCollision, a_settings);
+        if (!forcedRecoveryActive && positions.size() >= 2) {
+            const auto& collar = holderOwnsMesh ? positions.back() : positions.front();
+            const auto& nextRopePoint = holderOwnsMesh ? positions[positions.size() - 2] : positions[1];
+            _pullPoseController.Capture(_pullPoseState, collar, nextRopePoint, posedCollarAnchor.GetDistance(posedLeasherAnchor), _definition.minLength, _definition.maxLength);
         }
         if (positions.size() == _bones.size()) {
             ApplyPose(posedNeutralPositions, posedNeutralRotations);
@@ -207,17 +230,24 @@ namespace LeashFramework {
     void LeashInstance::ApplyDeferredPose() {
         LF_PROFILE_SCOPE("Leash/ApplyDeferredPose");
         auto leashed = _leashed.get();
-        if (!leashed || !Bind(*leashed)) {
+        auto holder = _holder.get();
+        auto* attachmentActor = _definition.meshOwner == LeashMeshOwner::kHolder ? leashed.get() : holder.get();
+        auto* meshOwner = _definition.meshOwner == LeashMeshOwner::kHolder ? holder.get() : leashed.get();
+        if (!leashed || !meshOwner || !Bind(*meshOwner)) {
             return;
         }
 
-        const auto anchorBindResult = _anchor.Bind();
+        const auto anchorBindResult = _anchor.Bind(attachmentActor, holder.get());
         if (anchorBindResult == LeashAnchor::BindResult::kFailed) {
             return;
         }
         _anchor.ApplyPose();
-        const auto anchor = _anchor.GetSample();
-        if (!anchor || !CanSimulateTogether(anchor->cell, *leashed)) {
+        const auto anchor = _anchor.GetSample(attachmentActor);
+        if (!anchor) {
+            return;
+        }
+        auto* pullGoalCell = holder ? holder->GetParentCell() : anchor->cell;
+        if (!CanSimulateTogether(pullGoalCell, *leashed)) {
             return;
         }
         if (anchorBindResult == LeashAnchor::BindResult::kChanged) {
@@ -236,27 +266,27 @@ namespace LeashFramework {
         }
     }
 
-    bool LeashInstance::Bind(RE::Actor& a_leashed) {
-        auto* leashedRoot = a_leashed.Get3D(false);
-        if (!leashedRoot) {
+    bool LeashInstance::Bind(RE::Actor& a_meshOwner) {
+        auto* meshRoot = a_meshOwner.Get3D(false);
+        if (!meshRoot) {
             ResetBinding();
             if (!_bindingWarningLogged) {
-                SKSE::log::warn("Unable to bind leash for {:08X}: leashed actor has no third-person 3D", _definition.leashedFormID);
+                SKSE::log::warn("Unable to bind leash for {:08X}: mesh owner {:08X} has no third-person 3D", _definition.leashedFormID, a_meshOwner.GetFormID());
                 _bindingWarningLogged = true;
             }
             return false;
         }
 
         // Equipment changes can detach cached nodes without replacing the actor root.
-        const auto leashBonesAttached = _bones.size() >= 2 && std::ranges::all_of(_bones, [&](const auto& a_bone) { return IsDescendantOf(a_bone.get(), leashedRoot); });
-        if (_boundLeashedRoot.get() == leashedRoot && leashBonesAttached) {
+        const auto leashBonesAttached = _bones.size() >= 2 && std::ranges::all_of(_bones, [&](const auto& a_bone) { return IsDescendantOf(a_bone.get(), meshRoot); });
+        if (_boundMeshRoot.get() == meshRoot && leashBonesAttached) {
             return true;
         }
 
         ResetBinding();
-        _boundLeashedRoot.reset(leashedRoot);
+        _boundMeshRoot.reset(meshRoot);
 
-        auto* parent = leashedRoot->GetObjectByName(RE::BSFixedString(_definition.parentBone));
+        auto* parent = meshRoot->GetObjectByName(RE::BSFixedString(_definition.parentBone));
         if (!parent) {
             ResetBinding();
             if (!_bindingWarningLogged) {
@@ -300,7 +330,7 @@ namespace LeashFramework {
 
     void LeashInstance::ResetBinding() {
         _bones.clear();
-        _boundLeashedRoot.reset();
+        _boundMeshRoot.reset();
         _neutralPositions.clear();
         _neutralRotations.clear();
         _segmentLengths.clear();

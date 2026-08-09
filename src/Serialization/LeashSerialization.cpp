@@ -18,6 +18,18 @@ struct glz::meta<LeashFramework::LeashAnchorDefinition> {
     static constexpr auto ids = std::array{"hand", "actorBone", "worldPosition"};
 };
 
+template <>
+struct glz::meta<LeashFramework::LeashMeshOwner> {
+    using enum LeashFramework::LeashMeshOwner;
+    static constexpr auto value = glz::enumerate("leashed", kLeashed, "holder", kHolder);
+};
+
+template <>
+struct glz::meta<LeashFramework::ClosedHand> {
+    using enum LeashFramework::ClosedHand;
+    static constexpr auto value = glz::enumerate("none", kNone, "right", kRight, "left", kLeft);
+};
+
 namespace LeashFramework::Serialization {
     struct SavedState {
         std::vector<LeashDefinition> leashes;
@@ -30,7 +42,7 @@ namespace LeashFramework::Serialization {
 
         constexpr auto kSerializationID = MakeRecordType('L', 'F', 'W', 'K');
         constexpr auto kDataRecord = MakeRecordType('L', 'S', 'H', 'S');
-        constexpr std::uint32_t kRecordVersion = 3;
+        constexpr std::uint32_t kRecordVersion = 4;
         constexpr std::uint32_t kMaximumRecordSize = 16U * 1024U * 1024U;
 
         void DiscardRecord(SKSE::SerializationInterface* a_interface, std::uint32_t a_length) {

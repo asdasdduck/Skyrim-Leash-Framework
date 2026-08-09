@@ -23,10 +23,9 @@ namespace LeashFramework {
         [[nodiscard]] static LeashManager& GetSingleton();
 
         [[nodiscard]] bool Apply(RE::Actor* a_holder, RE::Actor* a_leashed, std::string_view a_parentBone, std::string_view a_leashBoneMatch, float a_minLength, float a_maxLength, bool a_persistent);
-        [[nodiscard]] bool ApplyToHand(RE::Actor* a_holder, RE::Actor* a_leashed, std::string_view a_parentBone, std::string_view a_leashBoneMatch, float a_minLength, float a_maxLength, bool a_persistent,
-            bool a_rightHand);
-        [[nodiscard]] bool ApplyToBone(RE::Actor* a_holder, RE::Actor* a_leashed, std::string_view a_holderBone, std::string_view a_parentBone, std::string_view a_leashBoneMatch, float a_minLength, float a_maxLength,
-            bool a_persistent);
+        [[nodiscard]] bool ApplyToHand(RE::Actor* a_holder, RE::Actor* a_leashed, std::string_view a_parentBone, std::string_view a_leashBoneMatch, float a_minLength, float a_maxLength, bool a_persistent, bool a_rightHand);
+        [[nodiscard]] bool ApplyToBone(RE::Actor* a_holder, RE::Actor* a_leashed, std::string_view a_holderBone, float a_offsetX, float a_offsetY, float a_offsetZ, std::string_view a_parentBone, std::string_view a_leashBoneMatch, float a_minLength, float a_maxLength, bool a_persistent);
+        [[nodiscard]] bool ApplyHolderOwnedLeashToBone(RE::Actor* a_holder, RE::Actor* a_leashed, std::string_view a_leashedBone, float a_offsetX, float a_offsetY, float a_offsetZ, std::string_view a_parentBone, std::string_view a_leashBoneMatch, float a_minLength, float a_maxLength, bool a_persistent, std::int32_t a_closedHand);
         [[nodiscard]] bool ApplyAtPosition(RE::Actor* a_leashed, RE::TESObjectCELL* a_anchorCell, float a_x, float a_y, float a_z, std::string_view a_parentBone, std::string_view a_leashBoneMatch, float a_minLength,
             float a_maxLength, bool a_persistent);
         [[nodiscard]] bool Disconnect(RE::Actor* a_holder, RE::Actor* a_leashed);

@@ -188,8 +188,8 @@ namespace LeashFramework {
         return ApplyDefinition(std::move(definition));
     }
 
-    bool LeashManager::ApplyToBone(RE::Actor* a_holder, RE::Actor* a_leashed, std::string_view a_holderBone, std::string_view a_parentBone, std::string_view a_leashBoneMatch, float a_minLength, float a_maxLength,
-        bool a_persistent) {
+    bool LeashManager::ApplyToBone(RE::Actor* a_holder, RE::Actor* a_leashed, std::string_view a_holderBone, float a_offsetX, float a_offsetY, float a_offsetZ, std::string_view a_parentBone,
+        std::string_view a_leashBoneMatch, float a_minLength, float a_maxLength, bool a_persistent) {
         if (!a_holder || !a_leashed) {
             SKSE::log::warn("ApplyLeashToBone rejected null actor");
             return false;
@@ -197,7 +197,27 @@ namespace LeashFramework {
 
         LeashDefinition definition{.holderFormID = a_holder->GetFormID(),
             .leashedFormID = a_leashed->GetFormID(),
-            .anchor = ActorBoneAnchor{.boneName = std::string(a_holderBone)},
+            .anchor = ActorBoneAnchor{.boneName = std::string(a_holderBone), .offsetX = a_offsetX, .offsetY = a_offsetY, .offsetZ = a_offsetZ},
+            .parentBone = std::string(a_parentBone),
+            .leashBoneMatch = std::string(a_leashBoneMatch),
+            .minLength = a_minLength,
+            .maxLength = a_maxLength,
+            .persistent = a_persistent};
+        return ApplyDefinition(std::move(definition));
+    }
+
+    bool LeashManager::ApplyHolderOwnedLeashToBone(RE::Actor* a_holder, RE::Actor* a_leashed, std::string_view a_leashedBone, float a_offsetX, float a_offsetY, float a_offsetZ, std::string_view a_parentBone,
+        std::string_view a_leashBoneMatch, float a_minLength, float a_maxLength, bool a_persistent, std::int32_t a_closedHand) {
+        if (!a_holder || !a_leashed) {
+            SKSE::log::warn("ApplyHolderOwnedLeashToBone rejected null actor");
+            return false;
+        }
+
+        LeashDefinition definition{.holderFormID = a_holder->GetFormID(),
+            .leashedFormID = a_leashed->GetFormID(),
+            .meshOwner = LeashMeshOwner::kHolder,
+            .anchor = ActorBoneAnchor{.boneName = std::string(a_leashedBone), .offsetX = a_offsetX, .offsetY = a_offsetY, .offsetZ = a_offsetZ},
+            .closedHand = a_closedHand == 1 ? ClosedHand::kRight : a_closedHand == 2 ? ClosedHand::kLeft : ClosedHand::kNone,
             .parentBone = std::string(a_parentBone),
             .leashBoneMatch = std::string(a_leashBoneMatch),
             .minLength = a_minLength,
@@ -528,20 +548,25 @@ namespace LeashFramework {
     }
 
     bool LeashManager::IsValid(const LeashDefinition& a_definition) {
+        const auto validMeshOwner = a_definition.meshOwner == LeashMeshOwner::kLeashed || a_definition.meshOwner == LeashMeshOwner::kHolder;
+        const auto validClosedHand = a_definition.closedHand == ClosedHand::kNone ||
+                                     (a_definition.meshOwner == LeashMeshOwner::kHolder && (a_definition.closedHand == ClosedHand::kRight || a_definition.closedHand == ClosedHand::kLeft));
         const auto validAnchor = std::visit(
             [&](const auto& a_anchor) {
                 using Anchor = std::decay_t<decltype(a_anchor)>;
                 if constexpr (std::is_same_v<Anchor, HandAnchor>) {
-                    return a_definition.holderFormID != 0;
+                    return a_definition.meshOwner == LeashMeshOwner::kLeashed && a_definition.holderFormID != 0;
                 } else if constexpr (std::is_same_v<Anchor, ActorBoneAnchor>) {
-                    return a_definition.holderFormID != 0 && !a_anchor.boneName.empty();
+                    return a_definition.holderFormID != 0 && !a_anchor.boneName.empty() && std::isfinite(a_anchor.offsetX) && std::isfinite(a_anchor.offsetY) && std::isfinite(a_anchor.offsetZ);
                 } else {
-                    return a_definition.holderFormID == 0 && a_anchor.cellFormID != 0 && std::isfinite(a_anchor.x) && std::isfinite(a_anchor.y) && std::isfinite(a_anchor.z);
+                    return a_definition.meshOwner == LeashMeshOwner::kLeashed && a_definition.holderFormID == 0 && a_anchor.cellFormID != 0 && std::isfinite(a_anchor.x) && std::isfinite(a_anchor.y) &&
+                           std::isfinite(a_anchor.z);
                 }
             },
             a_definition.anchor);
-        return validAnchor && a_definition.leashedFormID != 0 && a_definition.holderFormID != a_definition.leashedFormID && !a_definition.parentBone.empty() && !a_definition.leashBoneMatch.empty() &&
-               std::isfinite(a_definition.minLength) && std::isfinite(a_definition.maxLength) && a_definition.minLength >= 0.0F && a_definition.maxLength >= a_definition.minLength && a_definition.maxLength > 0.0F;
+        return validMeshOwner && validClosedHand && validAnchor && a_definition.leashedFormID != 0 && a_definition.holderFormID != a_definition.leashedFormID && !a_definition.parentBone.empty() &&
+               !a_definition.leashBoneMatch.empty() && std::isfinite(a_definition.minLength) && std::isfinite(a_definition.maxLength) && a_definition.minLength >= 0.0F &&
+               a_definition.maxLength >= a_definition.minLength && a_definition.maxLength > 0.0F;
     }
 
     void LeashManager::RefreshActorFactions(const std::vector<RE::FormID>& a_actorFormIDs) {

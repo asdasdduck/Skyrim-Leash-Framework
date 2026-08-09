@@ -17,8 +17,14 @@ namespace LeashFramework::Papyrus {
         }
 
         bool ApplyLeashToBone(RE::StaticFunctionTag*, RE::Actor* a_holder, RE::Actor* a_leashed, RE::BSFixedString a_holderBone, RE::BSFixedString a_parentBone, RE::BSFixedString a_leashBoneMatch, float a_minLength,
-            float a_maxLength, bool a_persistent) {
-            return LeashManager::GetSingleton().ApplyToBone(a_holder, a_leashed, a_holderBone, a_parentBone, a_leashBoneMatch, a_minLength, a_maxLength, a_persistent);
+            float a_maxLength, bool a_persistent, float a_offsetX, float a_offsetY, float a_offsetZ) {
+            return LeashManager::GetSingleton().ApplyToBone(a_holder, a_leashed, a_holderBone, a_offsetX, a_offsetY, a_offsetZ, a_parentBone, a_leashBoneMatch, a_minLength, a_maxLength, a_persistent);
+        }
+
+        bool ApplyHolderOwnedLeashToBone(RE::StaticFunctionTag*, RE::Actor* a_holder, RE::Actor* a_leashed, RE::BSFixedString a_leashedBone, RE::BSFixedString a_parentBone, RE::BSFixedString a_leashBoneMatch,
+            float a_minLength, float a_maxLength, bool a_persistent, float a_offsetX, float a_offsetY, float a_offsetZ, std::int32_t a_closedHand) {
+            return LeashManager::GetSingleton().ApplyHolderOwnedLeashToBone(
+                a_holder, a_leashed, a_leashedBone, a_offsetX, a_offsetY, a_offsetZ, a_parentBone, a_leashBoneMatch, a_minLength, a_maxLength, a_persistent, a_closedHand);
         }
 
         bool ApplyLeashAtPosition(RE::StaticFunctionTag*, RE::Actor* a_leashed, RE::TESObjectCELL* a_anchorCell, float a_x, float a_y, float a_z, RE::BSFixedString a_parentBone, RE::BSFixedString a_leashBoneMatch,
@@ -55,6 +61,7 @@ namespace LeashFramework::Papyrus {
         a_vm->RegisterFunction("ApplyLeash", kScriptName, ApplyLeash);
         a_vm->RegisterFunction("ApplyLeashToHand", kScriptName, ApplyLeashToHand);
         a_vm->RegisterFunction("ApplyLeashToBone", kScriptName, ApplyLeashToBone);
+        a_vm->RegisterFunction("ApplyHolderOwnedLeashToBone", kScriptName, ApplyHolderOwnedLeashToBone);
         a_vm->RegisterFunction("ApplyLeashAtPosition", kScriptName, ApplyLeashAtPosition);
         a_vm->RegisterFunction("DisconnectLeash", kScriptName, DisconnectLeash);
         a_vm->RegisterFunction("UnleashAll", kScriptName, UnleashAll);

@@ -88,7 +88,7 @@ namespace LeashFramework::Animation {
         _settings = a_settings;
     }
 
-    void PullPoseController::Prepare(State& a_state, RE::Actor& a_actor, RE::NiAVObject& a_attachment, float a_deltaTime, bool a_allowed) {
+    void PullPoseController::Prepare(State& a_state, RE::Actor& a_actor, const RE::NiPoint3& a_attachment, float a_deltaTime, bool a_allowed) {
         if (!_settings.enabled || !a_allowed || a_actor.IsDead(false) || a_actor.IsInRagdollState() || !std::isfinite(a_deltaTime) || a_deltaTime <= 0.0F) {
             Reset(a_state);
             return;
@@ -145,9 +145,9 @@ namespace LeashFramework::Animation {
         }
     }
 
-    void PullPoseController::Capture(State& a_state, std::span<const RE::NiPoint3> a_ropePositions, float a_distance, float a_minLength, float a_maxLength) {
+    void PullPoseController::Capture(State& a_state, const RE::NiPoint3& a_collar, const RE::NiPoint3& a_nextRopePoint, float a_distance, float a_minLength, float a_maxLength) {
         a_state.pending = {};
-        if (!_settings.enabled || a_ropePositions.size() < 2 || !std::isfinite(a_distance)) {
+        if (!_settings.enabled || !std::isfinite(a_distance)) {
             a_state.tensionEngaged = false;
             return;
         }
@@ -163,7 +163,7 @@ namespace LeashFramework::Animation {
             return;
         }
 
-        auto direction = a_ropePositions[1] - a_ropePositions[0];
+        auto direction = a_nextRopePoint - a_collar;
         if (direction.Unitize() <= kDirectionEpsilon) {
             return;
         }
@@ -225,7 +225,7 @@ namespace LeashFramework::Animation {
         return true;
     }
 
-    void PullPoseController::BuildPose(State& a_state, RE::NiAVObject& a_attachment) {
+    void PullPoseController::BuildPose(State& a_state, const RE::NiPoint3& a_attachment) {
         auto spineDirection = a_state.bones[std::to_underlying(Bone::kNeck)]->world.translate - a_state.bones[std::to_underlying(Bone::kSpine)]->world.translate;
         if (spineDirection.Unitize() <= kDirectionEpsilon) {
             return;
@@ -238,7 +238,7 @@ namespace LeashFramework::Animation {
         }
 
         // Height will be like ~0.25 for the current waist rope, 1 for neck rope
-        const auto height = AttachmentHeight(a_state.bones, a_attachment.world.translate);
+        const auto height = AttachmentHeight(a_state.bones, a_attachment);
         const auto totalAngle = _settings.maximumAngleDegrees * std::numbers::pi_v<float> / 180.0F * a_state.smoothedStrength * bendFactor;
 
         a_state.axis = axis;
