@@ -10,6 +10,7 @@ namespace LeashFramework::Physics {
     namespace {
         constexpr float kMaximumDeltaTime = 0.05F;
         constexpr float kMaximumSubstepTime = 1.0F / 60.0F;
+        constexpr float kSubstepRatioTolerance = 0.05F;
         constexpr float kReferenceDampingTime = 1.0F / 60.0F;
         constexpr float kMinimumSegmentLength = 0.001F;
         constexpr float kSnagTriggerTime = 0.15F;
@@ -65,7 +66,10 @@ namespace LeashFramework::Physics {
         if (frameTime <= 0.0F) {
             return _positions;
         }
-        const auto substepCount = (std::max)(1U, static_cast<std::uint32_t>(std::ceil(frameTime / kMaximumSubstepTime)));
+        const auto substepRatio = frameTime / kMaximumSubstepTime;
+        const auto roundedSubstepRatio = std::round(substepRatio);
+        const auto stableSubstepRatio = std::abs(substepRatio - roundedSubstepRatio) <= kSubstepRatioTolerance ? roundedSubstepRatio : substepRatio;
+        const auto substepCount = (std::max)(1U, static_cast<std::uint32_t>(std::ceil(stableSubstepRatio)));
         const auto substepTime = substepCount > 0 ? frameTime / static_cast<float>(substepCount) : 0.0F;
         const auto startAnchor = a_neutralPositions.front();
         const auto substepDamping = std::pow(a_settings.damping, substepTime / kReferenceDampingTime);

@@ -113,6 +113,7 @@ namespace LeashFramework {
         return releasedPull || releasedRecovery;
     }
 
+    // Todo: Clean up this constant statement swap jank. Such logic should be abstracted 
     void LeashInstance::Tick(float a_deltaTime, const Physics::SimulationSettings& a_settings, const Physics::ActorBodyCollision* a_actorCollision, bool a_allowForcedRecovery) {
         LF_PROFILE_SCOPE("Leash/Tick");
         if (!std::isfinite(a_deltaTime) || a_deltaTime <= 0.0F) {
