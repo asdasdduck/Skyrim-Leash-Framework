@@ -49,8 +49,8 @@ namespace LeashFramework::UI::ModMenu {
         int closedHand{};
         bool persistent{true};
         bool enablePullDiagnostics{};
-        std::array<ArmorEntry, 4> armorEntries{ArmorEntry{"Leash.esm", "800 #Body Rope"}, ArmorEntry{"Leash.esm", "804 #Neck Rope"}, ArmorEntry{"Leash.esm", "806 #Neck Chain"},
-            ArmorEntry{"Leash.esm", "32ce #Magic Rope"}};
+        std::array<ArmorEntry, 5> armorEntries{ArmorEntry{"Leash.esm", "800 #Body Rope"}, ArmorEntry{"Leash.esm", "804 #Neck Rope"}, ArmorEntry{"Leash.esm", "806 #Neck Chain"},
+            ArmorEntry{"Leash.esm", "32ce #Magic Rope"}, ArmorEntry{"Leash.esm", "d69 #Leasher-held shield Leash"}};
 
         struct glaze {
             using T = DebugSettings;
