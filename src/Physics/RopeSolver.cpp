@@ -76,6 +76,7 @@ namespace LeashFramework::Physics {
         const auto complianceScale = a_settings.stretchCompliance / (substepTime * substepTime);
 
         for (std::uint32_t step = 0; step < substepCount; ++step) {
+            const auto actorInterpolation = static_cast<float>(step + 1) / static_cast<float>(substepCount);
             _positions.front() = startAnchor;
             _positions.back() = a_endAnchor;
             _previousPositions.front() = startAnchor;
@@ -93,19 +94,19 @@ namespace LeashFramework::Physics {
                 _positions[index] = current + velocity + a_settings.gravity * (substepTime * substepTime);
             }
 
-            ResolveCollisions(a_world, a_actorCollision, a_settings.collisionPadding, a_segmentLengths, 0.0F, a_settings.snagReleaseStrain, a_settings.snagBlockedDistance);
+            ResolveCollisions(a_world, a_actorCollision, actorInterpolation, a_settings.collisionPadding, a_segmentLengths, 0.0F, a_settings.snagReleaseStrain, a_settings.snagBlockedDistance);
             std::fill(_constraintMultipliers.begin(), _constraintMultipliers.end(), 0.0F);
             for (std::uint32_t iteration = 0; iteration < a_settings.constraintIterations; ++iteration) {
                 ApplyConstraints(a_segmentLengths, startAnchor, a_endAnchor, complianceScale, iteration % 2 != 0);
                 if (iteration + 1 < a_settings.constraintIterations) {
                     for (std::size_t index = 1; index + 1 < _positions.size(); ++index) {
                         if (!_collisionReleased[index]) {
-                            ApplyContactConstraints(index);
+                            ApplyContactConstraints(index, a_actorCollision, a_world, actorInterpolation, a_settings.collisionPadding);
                         }
                     }
                 }
             }
-            ResolveCollisions(a_world, a_actorCollision, a_settings.collisionPadding, a_segmentLengths, substepTime, a_settings.snagReleaseStrain, a_settings.snagBlockedDistance);
+            ResolveCollisions(a_world, a_actorCollision, actorInterpolation, a_settings.collisionPadding, a_segmentLengths, substepTime, a_settings.snagReleaseStrain, a_settings.snagBlockedDistance);
         }
 
         return _positions;
@@ -142,10 +143,35 @@ namespace LeashFramework::Physics {
         _positions.back() = a_endAnchor;
     }
 
-    void RopeSolver::ApplyContactConstraints(std::size_t a_index) {
+    void RopeSolver::ApplyContactConstraints(std::size_t a_index, const ActorBodyCollision* a_actorCollision, RE::bhkWorld* a_world, float a_actorInterpolation, float a_radius) {
+        std::array<ActorBodyCollision::ShapeKey, kMaximumContactConstraints> preferredActorShapes{};
+        std::size_t preferredActorShapeCount{};
+        for (std::size_t contactIndex = 0; contactIndex < _contactConstraintCounts[a_index]; ++contactIndex) {
+            const auto& actorShape = _contactConstraints[a_index][contactIndex].actorShape;
+            if (actorShape.actorFormID != 0) {
+                preferredActorShapes[preferredActorShapeCount++] = actorShape;
+            }
+        }
+
+        std::array<RE::NiPoint3, kMaximumContactConstraints> actorContactNormals{};
+        std::size_t actorContactNormalCount{};
         for (std::size_t iteration = 0; iteration < kContactProjectionIterations; ++iteration) {
+            if (a_actorCollision && preferredActorShapeCount > 0) {
+                const auto actorOverlap = a_actorCollision->FindDeepestOverlap(
+                    a_world, _positions[a_index], a_radius, a_actorInterpolation, std::span{preferredActorShapes.data(), preferredActorShapeCount});
+                if (actorOverlap) {
+                    const auto correction = actorOverlap->normal * actorOverlap->penetration;
+                    _positions[a_index] += correction;
+                    _previousPositions[a_index] += correction;
+                    _contactBlockedDistances[a_index] = (std::max)(_contactBlockedDistances[a_index], actorOverlap->penetration);
+                    actorContactNormals[actorContactNormalCount++] = actorOverlap->normal;
+                }
+            }
             for (std::size_t contactIndex = 0; contactIndex < _contactConstraintCounts[a_index]; ++contactIndex) {
                 const auto& contact = _contactConstraints[a_index][contactIndex];
+                if (contact.actorShape.actorFormID != 0) {
+                    continue;
+                }
                 const auto separation = (_positions[a_index] - contact.planePoint).Dot(contact.normal);
                 if (separation >= 0.0F) {
                     continue;
@@ -159,20 +185,41 @@ namespace LeashFramework::Physics {
             }
         }
 
+        if (actorContactNormalCount == 0) {
+            for (std::size_t contactIndex = 0; contactIndex < _contactConstraintCounts[a_index]; ++contactIndex) {
+                const auto& contact = _contactConstraints[a_index][contactIndex];
+                if (contact.actorShape.actorFormID != 0) {
+                    actorContactNormals[actorContactNormalCount++] = contact.normal;
+                }
+            }
+        }
+
         auto velocity = _positions[a_index] - _previousPositions[a_index];
         for (std::size_t iteration = 0; iteration < kContactProjectionIterations; ++iteration) {
-            for (std::size_t contactIndex = 0; contactIndex < _contactConstraintCounts[a_index]; ++contactIndex) {
-                const auto inwardVelocity = velocity.Dot(_contactConstraints[a_index][contactIndex].normal);
+            for (std::size_t normalIndex = 0; normalIndex < actorContactNormalCount; ++normalIndex) {
+                const auto inwardVelocity = velocity.Dot(actorContactNormals[normalIndex]);
                 if (inwardVelocity < 0.0F) {
-                    velocity -= _contactConstraints[a_index][contactIndex].normal * inwardVelocity;
+                    velocity -= actorContactNormals[normalIndex] * inwardVelocity;
+                }
+            }
+        }
+        for (std::size_t iteration = 0; iteration < kContactProjectionIterations; ++iteration) {
+            for (std::size_t contactIndex = 0; contactIndex < _contactConstraintCounts[a_index]; ++contactIndex) {
+                const auto& contact = _contactConstraints[a_index][contactIndex];
+                if (contact.actorShape.actorFormID != 0) {
+                    continue;
+                }
+                const auto inwardVelocity = velocity.Dot(contact.normal);
+                if (inwardVelocity < 0.0F) {
+                    velocity -= contact.normal * inwardVelocity;
                 }
             }
         }
         _previousPositions[a_index] = _positions[a_index] - velocity;
     }
 
-    void RopeSolver::ResolveCollisions(RE::bhkWorld* a_world, const ActorBodyCollision* a_actorCollision, float a_radius, std::span<const float> a_segmentLengths, float a_snagDeltaTime, float a_snagReleaseStrain,
-        float a_snagBlockedDistance) {
+    void RopeSolver::ResolveCollisions(RE::bhkWorld* a_world, const ActorBodyCollision* a_actorCollision, float a_actorInterpolation, float a_radius, std::span<const float> a_segmentLengths, float a_snagDeltaTime,
+        float a_snagReleaseStrain, float a_snagBlockedDistance) {
         LF_PROFILE_SCOPE("Rope/ResolveCollisions");
         if (!a_world) {
             std::fill(_contactConstraintCounts.begin(), _contactConstraintCounts.end(), 0);
@@ -188,7 +235,7 @@ namespace LeashFramework::Physics {
                 _contactConstraintCounts[index] = 0;
                 _substepStart[index] = _positions[index];
                 if (a_snagDeltaTime > 0.0F && _collisionReleaseTimes[index] >= kMinimumCollisionReleaseTime) {
-                    const auto overlap = WorldCollision::ResolveMovement(a_world, a_actorCollision, _positions[index], _positions[index], a_radius);
+                    const auto overlap = WorldCollision::ResolveMovement(a_world, a_actorCollision, _positions[index], _positions[index], a_radius, a_actorInterpolation, {});
                     if (!overlap.collided) {
                         _blockedContactTimes[index] = 0.0F;
                         _collisionReleaseTimes[index] = 0.0F;
@@ -200,7 +247,16 @@ namespace LeashFramework::Physics {
             }
 
             const auto targetPosition = _positions[index];
-            const auto result = WorldCollision::ResolveMovement(a_world, a_actorCollision, _substepStart[index], targetPosition, a_radius);
+            std::array<ActorBodyCollision::ShapeKey, kMaximumContactConstraints> preferredActorShapes{};
+            std::size_t preferredActorShapeCount{};
+            for (std::size_t contactIndex = 0; contactIndex < _contactConstraintCounts[index]; ++contactIndex) {
+                const auto& actorShape = _contactConstraints[index][contactIndex].actorShape;
+                if (actorShape.actorFormID != 0) {
+                    preferredActorShapes[preferredActorShapeCount++] = actorShape;
+                }
+            }
+            const auto result = WorldCollision::ResolveMovement(
+                a_world, a_actorCollision, _substepStart[index], targetPosition, a_radius, a_actorInterpolation, std::span{preferredActorShapes.data(), preferredActorShapeCount});
             _previousPositions[index] += result.position - targetPosition;
             _positions[index] = result.position;
 
@@ -212,8 +268,11 @@ namespace LeashFramework::Physics {
                 std::size_t matchingIndex = _contactConstraintCounts[index];
                 float matchingDot = kMatchingContactNormalDot;
                 for (std::size_t contactIndex = 0; contactIndex < _contactConstraintCounts[index]; ++contactIndex) {
-                    const auto normalDot = _contactConstraints[index][contactIndex].normal.Dot(resultContact.normal);
-                    if (!matchedContacts[contactIndex] && _contactConstraints[index][contactIndex].movingSurface == resultContact.movingSurface && normalDot >= matchingDot) {
+                    const auto& existingContact = _contactConstraints[index][contactIndex];
+                    const auto normalDot = existingContact.normal.Dot(resultContact.normal);
+                    const auto actorContactMatches = resultContact.actorShape.actorFormID != 0 && existingContact.actorShape == resultContact.actorShape;
+                    const auto worldContactMatches = resultContact.actorShape.actorFormID == 0 && existingContact.actorShape.actorFormID == 0 && existingContact.movingSurface == resultContact.movingSurface && normalDot >= matchingDot;
+                    if (!matchedContacts[contactIndex] && (actorContactMatches || worldContactMatches)) {
                         matchingIndex = contactIndex;
                         matchingDot = normalDot;
                     }
@@ -221,7 +280,7 @@ namespace LeashFramework::Physics {
                 if (matchingIndex < _contactConstraintCounts[index]) {
                     matchedContacts[matchingIndex] = true;
                 }
-                if (matchingIndex < _contactConstraintCounts[index] && !resultContact.movingSurface) {
+                if (matchingIndex < _contactConstraintCounts[index] && resultContact.actorShape.actorFormID == 0 && !resultContact.movingSurface) {
                     // Keep the old static plane when Havok only gives us a small change
                     auto contact = _contactConstraints[index][matchingIndex];
                     const auto planeShift = (resultContact.planePoint - contact.planePoint).Dot(contact.normal);
@@ -229,10 +288,12 @@ namespace LeashFramework::Physics {
                         contact.missedQueries = 0;
                         updatedContacts[updatedContactCount++] = contact;
                     } else {
-                        updatedContacts[updatedContactCount++] = {.planePoint = resultContact.planePoint, .normal = resultContact.normal, .movingSurface = resultContact.movingSurface};
+                        updatedContacts[updatedContactCount++] = {
+                            .planePoint = resultContact.planePoint, .normal = resultContact.normal, .actorShape = resultContact.actorShape, .movingSurface = resultContact.movingSurface};
                     }
                 } else {
-                    updatedContacts[updatedContactCount++] = {.planePoint = resultContact.planePoint, .normal = resultContact.normal, .movingSurface = resultContact.movingSurface};
+                    updatedContacts[updatedContactCount++] = {
+                        .planePoint = resultContact.planePoint, .normal = resultContact.normal, .actorShape = resultContact.actorShape, .movingSurface = resultContact.movingSurface};
                 }
                 _contactBlockedDistances[index] = (std::max)(_contactBlockedDistances[index], (result.position - targetPosition).Dot(resultContact.normal));
             }
@@ -240,14 +301,14 @@ namespace LeashFramework::Physics {
             for (std::size_t contactIndex = 0; contactIndex < _contactConstraintCounts[index] && updatedContactCount < updatedContacts.size(); ++contactIndex) {
                 auto contact = _contactConstraints[index][contactIndex];
                 const auto separation = (result.position - contact.planePoint).Dot(contact.normal);
-                if (!matchedContacts[contactIndex] && contact.missedQueries < kMaximumMissedContactQueries && separation <= kContactReleaseDistance) {
+                if (contact.actorShape.actorFormID == 0 && !matchedContacts[contactIndex] && contact.missedQueries < kMaximumMissedContactQueries && separation <= kContactReleaseDistance) {
                     ++contact.missedQueries;
                     updatedContacts[updatedContactCount++] = contact;
                 }
             }
             _contactConstraints[index] = updatedContacts;
             _contactConstraintCounts[index] = updatedContactCount;
-            ApplyContactConstraints(index);
+            ApplyContactConstraints(index, a_actorCollision, a_world, a_actorInterpolation, a_radius);
             _substepStart[index] = _positions[index];
 
             if (a_snagDeltaTime > 0.0F) {

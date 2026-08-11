@@ -126,9 +126,22 @@ namespace LeashFramework::Physics {
             bool _hasHit{};
         };
 
-        void AddContact(WorldCollision::Result& a_result, const RE::NiPoint3& a_planePoint, const RE::NiPoint3& a_normal, bool a_movingSurface) {
+        void AddContact(WorldCollision::Result& a_result, const RE::NiPoint3& a_planePoint, const RE::NiPoint3& a_normal, const ActorBodyCollision::ShapeKey& a_actorShape, bool a_movingSurface) {
+            a_result.collided = true;
             for (std::size_t index = 0; index < a_result.contactCount; ++index) {
                 auto& contact = a_result.contacts[index];
+                if (a_actorShape.actorFormID != 0) {
+                    if (contact.actorShape != a_actorShape) {
+                        continue;
+                    }
+                    contact.planePoint = a_planePoint;
+                    contact.normal = a_normal;
+                    contact.movingSurface = a_movingSurface;
+                    return;
+                }
+                if (contact.actorShape.actorFormID != 0) {
+                    continue;
+                }
                 if (contact.movingSurface != a_movingSurface || contact.normal.Dot(a_normal) < kMatchingContactNormalDot) {
                     continue;
                 }
@@ -139,13 +152,13 @@ namespace LeashFramework::Physics {
             }
 
             if (a_result.contactCount < a_result.contacts.size()) {
-                a_result.contacts[a_result.contactCount++] = {.planePoint = a_planePoint, .normal = a_normal, .movingSurface = a_movingSurface};
+                a_result.contacts[a_result.contactCount++] = {.planePoint = a_planePoint, .normal = a_normal, .actorShape = a_actorShape, .movingSurface = a_movingSurface};
             }
-            a_result.collided = true;
         }
     }  // namespace
 
-    WorldCollision::Result WorldCollision::ResolveMovement(RE::bhkWorld* a_world, const ActorBodyCollision* a_actorCollision, const RE::NiPoint3& a_from, const RE::NiPoint3& a_to, float a_radius) {
+    WorldCollision::Result WorldCollision::ResolveMovement(RE::bhkWorld* a_world, const ActorBodyCollision* a_actorCollision, const RE::NiPoint3& a_from, const RE::NiPoint3& a_to, float a_radius,
+        float a_actorInterpolation, std::span<const ActorBodyCollision::ShapeKey> a_preferredActorShapes) {
         LF_PROFILE_SCOPE("Collision/ResolveMovement");
         if (!a_world) {
             return {.position = a_to};
@@ -212,7 +225,7 @@ namespace LeashFramework::Physics {
             SphereCastCollector overlapCollector{&queryCollidable, direction, true};
             havokWorld->LinearCast(&queryCollidable, input, castCollector, &overlapCollector);
 
-            const auto actorOverlap = a_actorCollision ? a_actorCollision->FindDeepestOverlap(a_world, position, a_radius) : std::nullopt;
+            const auto actorOverlap = a_actorCollision ? a_actorCollision->FindDeepestOverlap(a_world, position, a_radius, a_actorInterpolation, a_preferredActorShapes) : std::nullopt;
             const auto worldOverlap = overlapCollector.HasHit() && overlapCollector.GetDistance() < 0.0F;
             if (worldOverlap || actorOverlap) {
                 const auto worldPenetration = worldOverlap ? -overlapCollector.GetDistance() * worldScaleInverse : 0.0F;
@@ -222,7 +235,7 @@ namespace LeashFramework::Physics {
                 const auto correction = normal * (penetration + kContactSkin);
                 position += correction;
                 target += correction;
-                AddContact(result, position, normal, useActor || overlapCollector.IsMovingSurface());
+                AddContact(result, position, normal, useActor ? actorOverlap->shape : ActorBodyCollision::ShapeKey{}, useActor || overlapCollector.IsMovingSurface());
                 continue;
             }
 
@@ -230,7 +243,7 @@ namespace LeashFramework::Physics {
                 return finish(target);
             }
 
-            const auto actorHit = a_actorCollision ? a_actorCollision->SweepSphere(a_world, position, target, a_radius) : std::nullopt;
+            const auto actorHit = a_actorCollision ? a_actorCollision->SweepSphere(a_world, position, target, a_radius, a_actorInterpolation, a_preferredActorShapes) : std::nullopt;
             if (!castCollector.HasHit() && !actorHit) {
                 return finish(target);
             }
@@ -251,7 +264,7 @@ namespace LeashFramework::Physics {
             if ((skinPosition - position).Dot(normal) <= 0.0F) {
                 position = skinPosition;
             }
-            AddContact(result, position, normal, useActor || castCollector.IsMovingSurface());
+            AddContact(result, position, normal, useActor ? actorHit->shape : ActorBodyCollision::ShapeKey{}, useActor || castCollector.IsMovingSurface());
             if (remaining.SqrLength() < kMinimumMovementSquared) {
                 return finish(position);
             }

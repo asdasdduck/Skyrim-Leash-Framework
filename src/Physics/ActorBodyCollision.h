@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <vector>
 
 #include "../PCH.h"
@@ -12,7 +13,15 @@
 namespace LeashFramework::Physics {
     class ActorBodyCollision {
     public:
+        struct ShapeKey {
+            std::uint32_t actorFormID{};
+            std::uint8_t shapeIndex{};
+
+            [[nodiscard]] bool operator==(const ShapeKey&) const = default;
+        };
+
         struct Hit {
+            ShapeKey shape;
             RE::NiPoint3 normal;
             float fraction{};
             float penetration{};
@@ -21,8 +30,10 @@ namespace LeashFramework::Physics {
         void Update(const ActorBodyCollisionSettings& a_settings);
         void DrawDebug() const;
         void Clear();
-        [[nodiscard]] std::optional<Hit> FindDeepestOverlap(const RE::bhkWorld* a_world, const RE::NiPoint3& a_position, float a_radius) const;
-        [[nodiscard]] std::optional<Hit> SweepSphere(const RE::bhkWorld* a_world, const RE::NiPoint3& a_from, const RE::NiPoint3& a_to, float a_radius) const;
+        [[nodiscard]] std::optional<Hit> FindDeepestOverlap(const RE::bhkWorld* a_world, const RE::NiPoint3& a_position, float a_radius, float a_interpolation,
+            std::span<const ShapeKey> a_preferredShapes) const;
+        [[nodiscard]] std::optional<Hit> SweepSphere(const RE::bhkWorld* a_world, const RE::NiPoint3& a_from, const RE::NiPoint3& a_to, float a_radius, float a_interpolation,
+            std::span<const ShapeKey> a_preferredShapes) const;
 
     private:
         enum class Bone : std::size_t { kSpine, kSpine1, kSpine2, kNeck, kTotal };
@@ -60,9 +71,17 @@ namespace LeashFramework::Physics {
             RE::bhkWorld* world{};
             Bounds bounds{};
             bool hasWorldBound{};
+            std::size_t previousBodyIndex{};
+            bool hasPreviousBody{};
             mutable std::size_t bodyIndex{};
             mutable bool bodyInitializationAttempted{};
             mutable bool bodyInitialized{};
+        };
+
+        struct PreviousBody {
+            std::uint32_t formID{};
+            RE::bhkWorld* world{};
+            Body body;
         };
 
         void UpdateActor(RE::Actor* a_actor);
@@ -72,6 +91,7 @@ namespace LeashFramework::Physics {
 
         std::vector<ActorProxy> _actors;
         mutable std::vector<Body> _bodies;
+        std::vector<PreviousBody> _previousBodies;
         ActorBodyCollisionSettings _settings;
     };
 }  // namespace LeashFramework::Physics

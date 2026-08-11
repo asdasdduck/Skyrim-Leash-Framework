@@ -7,11 +7,10 @@
 #include <vector>
 
 #include "../PCH.h"
+#include "ActorBodyCollision.h"
 #include "SimulationSettings.h"
 
 namespace LeashFramework::Physics {
-    class ActorBodyCollision;
-
     class RopeSolver {
     public:
         void Reset();
@@ -26,14 +25,15 @@ namespace LeashFramework::Physics {
         struct ContactConstraint {
             RE::NiPoint3 planePoint;
             RE::NiPoint3 normal;
+            ActorBodyCollision::ShapeKey actorShape;
             std::uint8_t missedQueries{};
             bool movingSurface{};
         };
 
         void ApplyConstraints(std::span<const float> a_segmentLengths, const RE::NiPoint3& a_startAnchor, const RE::NiPoint3& a_endAnchor, float a_complianceScale, bool a_reverse);
-        void ApplyContactConstraints(std::size_t a_index);
-        void ResolveCollisions(RE::bhkWorld* a_world, const ActorBodyCollision* a_actorCollision, float a_radius, std::span<const float> a_segmentLengths, float a_snagDeltaTime, float a_snagReleaseStrain,
-            float a_snagBlockedDistance);
+        void ApplyContactConstraints(std::size_t a_index, const ActorBodyCollision* a_actorCollision, RE::bhkWorld* a_world, float a_actorInterpolation, float a_radius);
+        void ResolveCollisions(RE::bhkWorld* a_world, const ActorBodyCollision* a_actorCollision, float a_actorInterpolation, float a_radius, std::span<const float> a_segmentLengths, float a_snagDeltaTime,
+            float a_snagReleaseStrain, float a_snagBlockedDistance);
 
         std::vector<RE::NiPoint3> _positions;
         std::vector<RE::NiPoint3> _previousPositions;
