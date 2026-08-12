@@ -38,6 +38,7 @@ namespace LeashFramework {
         [[nodiscard]] bool Bind(RE::Actor& a_meshOwner);
         void ResetBinding();
         void ReadNeutralPose();
+        void UpdateGeometryWorldBounds();
         void ApplyPose(std::span<const RE::NiPoint3> a_neutralPositions, std::span<const RE::NiMatrix3> a_neutralRotations);
 
         LeashDefinition _definition;

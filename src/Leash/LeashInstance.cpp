@@ -265,6 +265,7 @@ namespace LeashFramework {
             _bones[index]->world.translate = _deferredTranslations[index];
             _bones[index]->world.rotate = _deferredRotations[index];
         }
+        UpdateGeometryWorldBounds();
     }
 
     bool LeashInstance::Bind(RE::Actor& a_meshOwner) {
@@ -339,6 +340,39 @@ namespace LeashFramework {
         _deferredRotations.clear();
         _solver.Reset();
         _pullPoseController.Reset(_pullPoseState);
+    }
+
+    // Updates the world bounds so the leash prevents skyrim from culling
+    void LeashInstance::UpdateGeometryWorldBounds() {
+        
+        RE::BSVisit::TraverseScenegraphGeometries(_boundMeshRoot.get(), [&](RE::BSGeometry* a_geometry) {
+            const auto skin = a_geometry->GetGeometryRuntimeData().skinInstance;
+            if (!skin || !skin->skinData || !skin->bones || !skin->boneWorldTransforms) {
+                return RE::BSVisit::BSVisitControl::kContinue;
+            }
+
+            const bool usesLeashBone = std::ranges::any_of(_bones, [&](const auto& a_bone) {
+                for (std::uint32_t index = 0; index < skin->numMatrices; ++index) {
+                    if (skin->bones[index] == a_bone.get()) {
+                        return true;
+                    }
+                }
+                return false;
+            });
+
+            if (!usesLeashBone) {
+                return RE::BSVisit::BSVisitControl::kContinue;
+            }
+
+            a_geometry->UpdateWorldBound();
+
+            // Update every containing node, bottom-up, including the actor root
+            for (auto* parent = a_geometry->parent; parent; parent = parent->parent) {
+                parent->UpdateWorldBound();
+            }
+
+            return RE::BSVisit::BSVisitControl::kContinue;
+        });
     }
 
     void LeashInstance::ReadNeutralPose() {
