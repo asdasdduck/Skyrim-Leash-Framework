@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(LeashFramework VERSION 1.1.0 LANGUAGES CXX RC)
+project(LeashFramework VERSION 1.1.1 LANGUAGES CXX RC)
 
 if(DEFINED ENV{SKYRIM_FOLDER} AND IS_DIRECTORY "$ENV{SKYRIM_FOLDER}/Data")
     set(OUTPUT_FOLDER "$ENV{SKYRIM_FOLDER}/Data")
