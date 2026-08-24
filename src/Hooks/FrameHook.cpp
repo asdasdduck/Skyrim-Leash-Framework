@@ -30,7 +30,7 @@ namespace LeashFramework::Hooks {
     void FrameHook::SetSettings(FrameHookSettings a_settings) { _settings = a_settings; }
 
     void FrameHook::InstallAIControlledCameraFreedomHook() {
-        REL::Relocation<std::uintptr_t> setFreeRotationMode{RELOCATION_ID(49968, 50904)};
+        REL::Relocation<std::uintptr_t> setFreeRotationMode{REL::VariantID(49968, 50904, 0x879dd0)};
         REL::Relocation<std::uintptr_t> callSite{setFreeRotationMode.address() + 0x43};
         constexpr std::uint8_t expectedOpcode = 0xE8;
         if (!REL::verify_code(callSite.address(), &expectedOpcode, 1)) {
