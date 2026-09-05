@@ -829,7 +829,24 @@ namespace LeashFramework::UI::ModMenu {
                 ImGuiMCP::InputFloat("Maximum pull strength", &pullPose.maximumStrength, 0.05F, 0.25F, "%.2f");
                 ImGuiMCP::InputFloat("Maximum spine angle", &pullPose.maximumAngleDegrees, 0.5F, 2.0F, "%.1f degrees");
                 ImGuiMCP::InputFloat("Pose response rate", &pullPose.responseRate, 0.5F, 2.0F, "%.1f");
-                ImGuiMCP::TextWrapped("Higher response rates follow tension changes faster.");
+                ImGuiMCP::InputFloat("Pose anticipation time", &pullPose.anticipationTime, 0.01F, 0.05F, "%.2f seconds");
+                if (ImGuiMCP::IsItemHovered()) {
+                    ImGuiMCP::SetTooltip(
+                        "Predicts how far the leash endpoints will separate, so leaning can react before the chain stretches.\n"
+                        "Higher values react earlier to outward movement; lower values are less anticipatory.\n"
+                        "Default: 0.12 seconds. Range: 0.00-0.30. Zero disables prediction, not leaning.\n"
+                        "Prediction is capped at 15%% of the chain's actual length or 32 units, whichever is smaller.\n"
+                        "Affects the pose only; does not change maxLength or start movement pulling earlier.");
+                }
+                ImGuiMCP::InputFloat("Pose slack reserve ratio", &pullPose.slackReserveRatio, 0.01F, 0.05F, "%.2f");
+                if (ImGuiMCP::IsItemHovered()) {
+                    ImGuiMCP::SetTooltip(
+                        "Reserves a little of the chain's actual length by starting the lean before it becomes fully taut.\n"
+                        "Higher values provide more buffer but may cause leaning while the chain still looks slack.\n"
+                        "Default: 0.03 (3%%). Range: 0.00-0.10. Zero disables the reserve, not leaning.\n"
+                        "The reserve is capped at 8 units. A 200-unit chain at 0.03 reserves 6 units.\n"
+                        "Affects the pose only; does not shorten the chain or change the movement pull threshold.");
+                }
                 ImGuiMCP::TreePop();
             }
             ImGuiMCP::SetNextItemWidth(ImGuiMCP::CalcItemWidth() * 0.4F);

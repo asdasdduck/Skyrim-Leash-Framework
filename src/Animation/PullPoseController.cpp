@@ -15,8 +15,15 @@ namespace LeashFramework::Animation {
         constexpr std::array<std::string_view, 4> kBoneNames{"NPC Spine [Spn0]", "NPC Spine1 [Spn1]", "NPC Spine2 [Spn2]", "NPC Neck [Neck]"};
         constexpr std::array<float, 3> kLowerAttachmentWeights{0.95F, -0.35F, -0.55F};  // This is like waist ropes
         constexpr std::array<float, 3> kUpperAttachmentWeights{0.20F, 0.35F, 0.45F}; // Neck ropes!
-        constexpr float kEngageThreshold = 0.10F;
-        constexpr float kReleaseThreshold = 0.05F;
+        constexpr float kEngageDeficit = 0.5F;
+        constexpr float kReleaseDeficit = 0.1F;
+        constexpr float kMaximumSampleTime = 0.1F;
+        constexpr float kMaximumSampleDisplacement = 128.0F;
+        constexpr float kVelocityResponseRate = 20.0F;
+        constexpr float kEngageResponseMultiplier = 2.5F;
+        constexpr float kReleaseResponseMultiplier = 0.5F;
+        constexpr std::size_t kStrengthSamples = 8;
+        constexpr std::size_t kStrengthRefinements = 6;
         constexpr float kNeckCounterRotation = 0.20F;
         constexpr float kDirectionEpsilon = 0.0001F;
         constexpr float kMinimumVisibleStrength = 0.0001F;
@@ -85,38 +92,113 @@ namespace LeashFramework::Animation {
         a_settings.maximumStrength = std::clamp(maximumStrength, a_settings.minimumStrength, 1.0F);
         a_settings.maximumAngleDegrees = std::isfinite(a_settings.maximumAngleDegrees) ? std::clamp(a_settings.maximumAngleDegrees, 0.0F, 50.0F) : defaults.maximumAngleDegrees;
         a_settings.responseRate = std::isfinite(a_settings.responseRate) ? std::clamp(a_settings.responseRate, 0.1F, 30.0F) : defaults.responseRate;
+        a_settings.anticipationTime = std::isfinite(a_settings.anticipationTime) ? std::clamp(a_settings.anticipationTime, 0.0F, 0.3F) : defaults.anticipationTime;
+        a_settings.slackReserveRatio = std::isfinite(a_settings.slackReserveRatio) ? std::clamp(a_settings.slackReserveRatio, 0.0F, 0.1F) : defaults.slackReserveRatio;
         _settings = a_settings;
     }
 
-    void PullPoseController::Prepare(State& a_state, RE::Actor& a_actor, const RE::NiPoint3& a_attachment, float a_deltaTime, bool a_allowed) {
-        if (!_settings.enabled || !a_allowed || a_actor.IsDead(false) || a_actor.IsInRagdollState() || !std::isfinite(a_deltaTime) || a_deltaTime <= 0.0F) {
+    void PullPoseController::Prepare(State& a_state, RE::Actor& a_actor, const RE::NiAVObject* a_attachmentNode, const RE::NiPoint3& a_attachment, const RE::NiPoint3& a_anchor, float a_ropeLength, float a_deltaTime, bool a_allowed) {
+        if (!_settings.enabled || !a_allowed || !a_attachmentNode || a_actor.IsDead(false) || a_actor.IsInRagdollState() || !std::isfinite(a_deltaTime) || a_deltaTime <= 0.0F ||
+            !std::isfinite(a_ropeLength) || a_ropeLength <= kDirectionEpsilon || !Bind(a_state, a_actor)) {
             Reset(a_state);
             return;
         }
         a_state.frozen = false;
+        a_state.prepared = false;
 
-        const auto response = 1.0F - std::exp(-_settings.responseRate * a_deltaTime);
-        a_state.smoothedStrength = std::lerp(a_state.smoothedStrength, a_state.pending.strength, response);
-        if (a_state.pending.strength > 0.0F) {
+        auto directDirection = a_anchor - a_attachment;
+        const auto distance = directDirection.Unitize();
+        if (!std::isfinite(distance) || distance <= kDirectionEpsilon) {
+            Reset(a_state);
+            return;
+        }
+        const auto distanceDelta = distance - a_state.previousDistance;
+        if (a_state.hasDistanceSample && a_deltaTime <= kMaximumSampleTime && std::abs(distanceDelta) <= kMaximumSampleDisplacement) {
+            const auto velocityBlend = 1.0F - std::exp(-kVelocityResponseRate * a_deltaTime);
+            a_state.separationSpeed = std::lerp(a_state.separationSpeed, distanceDelta / a_deltaTime, velocityBlend);
+        } else {
+            a_state.separationSpeed = 0.0F;
+        }
+        a_state.previousDistance = distance;
+        a_state.hasDistanceSample = true;
+
+        const auto reserve = std::min(a_ropeLength * _settings.slackReserveRatio, 8.0F);
+        const auto prediction = std::min(std::max(a_state.separationSpeed, 0.0F) * _settings.anticipationTime, std::min(a_ropeLength * 0.15F, 32.0F));
+        const auto deficit = std::max(distance + prediction - (a_ropeLength - reserve), 0.0F);
+        a_state.tensionEngaged = deficit > (a_state.tensionEngaged ? kReleaseDeficit : kEngageDeficit);
+        float targetStrength{};
+        if (a_state.tensionEngaged) {
+            auto targetDirection = a_state.ropeDirection;
+            if (targetDirection.Dot(directDirection) < 0.25F) {
+                targetDirection = directDirection;
+            }
+            const auto directionResponse = 1.0F - std::exp(-_settings.responseRate * kEngageResponseMultiplier * a_deltaTime);
             if (!a_state.hasSmoothedDirection) {
-                a_state.smoothedDirection = a_state.pending.direction;
+                a_state.smoothedDirection = targetDirection;
                 a_state.hasSmoothedDirection = true;
             } else {
-                auto direction = a_state.smoothedDirection * (1.0F - response) + a_state.pending.direction * response;
+                auto direction = a_state.smoothedDirection * (1.0F - directionResponse) + targetDirection * directionResponse;
                 if (direction.Unitize() > kDirectionEpsilon) {
                     a_state.smoothedDirection = direction;
                 } else {
-                    a_state.smoothedDirection = a_state.pending.direction;
+                    a_state.smoothedDirection = targetDirection;
+                }
+            }
+
+            // Evaluate the real attachment displacement: waist and neck attachments have very different leverage.
+            const auto shorteningAt = [&](float a_strength) {
+                a_state.prepared = false;
+                BuildPose(a_state, a_attachment, a_strength);
+                auto position = a_attachment;
+                auto rotation = a_attachmentNode->world.rotate;
+                Transform(a_state, *a_attachmentNode, position, rotation);
+                return distance - position.GetDistance(a_anchor);
+            };
+            float bestShortening{};
+            for (std::size_t sample = 1; sample <= kStrengthSamples; ++sample) {
+                const auto strength = _settings.maximumStrength * static_cast<float>(sample) / static_cast<float>(kStrengthSamples);
+                const auto shortening = shorteningAt(strength);
+                if (shortening > bestShortening) {
+                    bestShortening = shortening;
+                    targetStrength = strength;
+                }
+                if (shortening >= deficit) {
+                    auto lower = _settings.maximumStrength * static_cast<float>(sample - 1) / static_cast<float>(kStrengthSamples);
+                    auto upper = strength;
+                    for (std::size_t refinement = 0; refinement < kStrengthRefinements; ++refinement) {
+                        const auto middle = (lower + upper) * 0.5F;
+                        if (shorteningAt(middle) >= deficit) {
+                            upper = middle;
+                        } else {
+                            lower = middle;
+                        }
+                    }
+                    targetStrength = upper;
+                    break;
+                }
+            }
+            if (bestShortening > kDirectionEpsilon) {
+                const auto minimumStrength = _settings.minimumStrength * SmoothStep(0.0F, std::max(reserve, 1.0F), deficit);
+                if (minimumStrength > targetStrength && shorteningAt(minimumStrength) > 0.0F) {
+                    targetStrength = minimumStrength;
                 }
             }
         }
 
+        const auto responseRate = _settings.responseRate * (targetStrength > a_state.smoothedStrength ? kEngageResponseMultiplier : kReleaseResponseMultiplier);
+        a_state.smoothedStrength = std::clamp(std::lerp(a_state.smoothedStrength, targetStrength, 1.0F - std::exp(-responseRate * a_deltaTime)), 0.0F, _settings.maximumStrength);
         a_state.prepared = false;
-        if (a_state.smoothedStrength <= kMinimumVisibleStrength || !a_state.hasSmoothedDirection || !Bind(a_state, a_actor)) {
+        if (a_state.smoothedStrength <= kMinimumVisibleStrength || !a_state.hasSmoothedDirection) {
             a_state.deferredTransforms.clear();
             return;
         }
-        BuildPose(a_state, a_attachment);
+        BuildPose(a_state, a_attachment, a_state.smoothedStrength);
+        auto posedAttachment = a_attachment;
+        auto posedRotation = a_attachmentNode->world.rotate;
+        Transform(a_state, *a_attachmentNode, posedAttachment, posedRotation);
+        if (posedAttachment.GetDistance(a_anchor) > distance + kDirectionEpsilon) {
+            a_state.prepared = false;
+        }
         if (!a_state.prepared) {
             a_state.deferredTransforms.clear();
         }
@@ -145,30 +227,9 @@ namespace LeashFramework::Animation {
         }
     }
 
-    void PullPoseController::Capture(State& a_state, const RE::NiPoint3& a_collar, const RE::NiPoint3& a_nextRopePoint, float a_distance, float a_minLength, float a_maxLength) {
-        a_state.pending = {};
-        if (!_settings.enabled || !std::isfinite(a_distance)) {
-            a_state.tensionEngaged = false;
-            return;
-        }
-
-        const auto tensionRange = std::max(a_maxLength - a_minLength, 1.0F);
-        const auto normalizedTension = std::clamp((a_distance - a_minLength) / tensionRange, 0.0F, 1.0F);
-        if (a_state.tensionEngaged) {
-            a_state.tensionEngaged = normalizedTension > kReleaseThreshold;
-        } else {
-            a_state.tensionEngaged = normalizedTension > kEngageThreshold;
-        }
-        if (!a_state.tensionEngaged) {
-            return;
-        }
-
+    void PullPoseController::Capture(State& a_state, const RE::NiPoint3& a_collar, const RE::NiPoint3& a_nextRopePoint) {
         auto direction = a_nextRopePoint - a_collar;
-        if (direction.Unitize() <= kDirectionEpsilon) {
-            return;
-        }
-        const auto blend = SmoothStep(kEngageThreshold, 1.0F, normalizedTension);
-        a_state.pending = {.direction = direction, .strength = blend * std::lerp(_settings.minimumStrength, _settings.maximumStrength, blend)};
+        a_state.ropeDirection = direction.Unitize() > kDirectionEpsilon ? direction : RE::NiPoint3{};
     }
 
     void PullPoseController::Apply(State& a_state, RE::Actor& a_actor) {
@@ -191,7 +252,11 @@ namespace LeashFramework::Animation {
         CaptureDeferredPose(a_state);
     }
 
-    void PullPoseController::Freeze(State& a_state) { a_state.frozen = true; }
+    void PullPoseController::Freeze(State& a_state) {
+        a_state.frozen = true;
+        a_state.hasDistanceSample = false;
+        a_state.separationSpeed = 0.0F;
+    }
 
     void PullPoseController::Reset(State& a_state) { a_state = {}; }
 
@@ -225,7 +290,7 @@ namespace LeashFramework::Animation {
         return true;
     }
 
-    void PullPoseController::BuildPose(State& a_state, const RE::NiPoint3& a_attachment) {
+    void PullPoseController::BuildPose(State& a_state, const RE::NiPoint3& a_attachment, float a_strength) {
         auto spineDirection = a_state.bones[std::to_underlying(Bone::kNeck)]->world.translate - a_state.bones[std::to_underlying(Bone::kSpine)]->world.translate;
         if (spineDirection.Unitize() <= kDirectionEpsilon) {
             return;
@@ -239,7 +304,7 @@ namespace LeashFramework::Animation {
 
         // Height will be like ~0.25 for the current waist rope, 1 for neck rope
         const auto height = AttachmentHeight(a_state.bones, a_attachment);
-        const auto totalAngle = _settings.maximumAngleDegrees * std::numbers::pi_v<float> / 180.0F * a_state.smoothedStrength * bendFactor;
+        const auto totalAngle = _settings.maximumAngleDegrees * std::numbers::pi_v<float> / 180.0F * a_strength * bendFactor;
 
         a_state.axis = axis;
         for (std::size_t index = 0; index < 3; ++index) {

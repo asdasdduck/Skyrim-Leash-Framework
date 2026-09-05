@@ -17,6 +17,14 @@ namespace LeashFramework {
         constexpr float kGoalMoveThreshold = 64.0F;
         constexpr float kMinimumNormalizedSpeed = 0.65F;
         constexpr float kMaximumNormalizedSpeed = 2.0F;
+        constexpr float kMaximumCatchUpSpeed = 3.0F;
+        constexpr float kCatchUpGain = 1.5F;
+        constexpr float kMinimumCatchUpRange = 32.0F;
+        constexpr float kVelocityResponseRate = 20.0F;
+        constexpr float kMaximumSampleTime = 0.1F;
+        constexpr float kMaximumSampleDisplacement = 128.0F;
+        constexpr float kMaximumGoalSpeed = 1200.0F;
+        constexpr float kFallbackRunSpeed = 370.0F;
         constexpr float kPlayerAssistSpeed = 1.0F;
         constexpr float kPlayerResistanceSpeed = 1.5F;
         constexpr float kMaximumForcedSpeedRatio = 0.5F;
@@ -96,9 +104,24 @@ namespace LeashFramework {
         }
     }  // namespace
 
-    void PullController::Update(State& a_state, RE::Actor& a_actor, const RE::NiPoint3& a_collarAnchor, const RE::NiPoint3& a_goal, RE::TESObjectCELL* a_goalCell, float a_minLength, float a_maxLength,
-        float a_deltaTime) {
+    void PullController::Update(State& a_state, RE::Actor& a_actor, const RE::NiPoint3& a_collarAnchor, const RE::NiPoint3& a_anchor, float a_ropeLength, const RE::NiPoint3& a_goal, RE::TESObjectCELL* a_goalCell, float a_minLength, float a_maxLength, float a_deltaTime) {
         LF_PROFILE_SCOPE("Controller/Pull");
+        auto goalDelta = a_goal - a_state.previousMotionGoal;
+        goalDelta.z = 0.0F;
+        if (a_state.hasMotionSample && std::isfinite(a_deltaTime) && a_deltaTime > 0.0F && a_deltaTime <= kMaximumSampleTime &&
+            goalDelta.SqrLength() <= kMaximumSampleDisplacement * kMaximumSampleDisplacement) {
+            auto velocity = goalDelta / a_deltaTime;
+            const auto speed = velocity.Length();
+            if (speed > kMaximumGoalSpeed) {
+                velocity *= kMaximumGoalSpeed / speed;
+            }
+            const auto blend = 1.0F - std::exp(-kVelocityResponseRate * a_deltaTime);
+            a_state.goalVelocity += (velocity - a_state.goalVelocity) * blend;
+        } else {
+            a_state.goalVelocity = {};
+        }
+        a_state.previousMotionGoal = a_goal;
+        a_state.hasMotionSample = true;
         const auto distance = std::sqrt(HorizontalDistanceSquared(a_collarAnchor, a_goal));
         const auto formID = a_actor.GetFormID();
         if (!a_state.active) {
@@ -139,7 +162,8 @@ namespace LeashFramework {
                 return;
             }
 
-            a_state = State{.active = true, .restorePlayerControls = restorePlayerControls};
+            a_state.active = true;
+            a_state.restorePlayerControls = restorePlayerControls;
             LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kStarted, "direct locomotion started", a_actor, distance, a_minLength, a_maxLength);
             if (auto* eventSource = SKSE::GetModCallbackEventSource()) {
                 const SKSE::ModCallbackEvent event{.eventName = RE::BSFixedString{"LeashFramework_OnActorPulled"}, .strArg = {}, .numArg = distance, .sender = std::addressof(a_actor)};
@@ -199,6 +223,18 @@ namespace LeashFramework {
         const auto tensionRange = std::max(a_maxLength - a_minLength, 1.0F);
         const auto tension = std::clamp((distance - a_minLength) / tensionRange, 0.0F, 1.0F);
         auto normalizedSpeed = std::lerp(kMinimumNormalizedSpeed, kMaximumNormalizedSpeed, tension);
+        auto goalDirection = a_goal - a_collarAnchor;
+        goalDirection.z = 0.0F;
+        if (goalDirection.Unitize() > 0.001F) {
+            const auto outwardSpeed = std::max(a_state.goalVelocity.Dot(goalDirection), 0.0F);
+            const auto runSpeed = a_actor.GetRunSpeed();
+            const auto referenceSpeed = std::isfinite(runSpeed) && runSpeed > 1.0F ? runSpeed : kFallbackRunSpeed;
+            // The planner accepts normalized speed, so anchor velocity supplies a bounded boost rather than a raw velocity command.
+            const auto followBoost = outwardSpeed / referenceSpeed * kMaximumNormalizedSpeed * tension;
+            const auto excess = std::max({distance - a_maxLength, a_collarAnchor.GetDistance(a_anchor) - a_ropeLength, 0.0F});
+            const auto catchUpBoost = excess / std::max(tensionRange, kMinimumCatchUpRange) * kCatchUpGain;
+            normalizedSpeed = std::min(normalizedSpeed + followBoost + catchUpBoost, kMaximumCatchUpSpeed);
+        }
         if (RE::PlayerCharacter::GetSingleton() == std::addressof(a_actor)) {
             float playerEffort{};
             if (const auto* controls = RE::PlayerControls::GetSingleton()) {
@@ -233,8 +269,14 @@ namespace LeashFramework {
         }
     }
 
+    void PullController::ResetMotion(State& a_state) {
+        a_state.hasMotionSample = false;
+        a_state.goalVelocity = {};
+    }
+
     bool PullController::Release(State& a_state, RE::Actor* a_actor) {
         if (!a_state.active) {
+            a_state = {};
             return false;
         }
         if (a_actor) {

@@ -23,13 +23,17 @@ namespace LeashFramework {
             std::size_t waypointIndex{};
             std::size_t stableDirectFrames{};
             RE::NiPoint3 lastGoal;
+            RE::NiPoint3 previousMotionGoal;
+            RE::NiPoint3 goalVelocity;
             float replanDelay{};
             float smoothedPlayerEffort{};
             bool active{};
             bool restorePlayerControls{};
+            bool hasMotionSample{};
         };
 
-        void Update(State& a_state, RE::Actor& a_actor, const RE::NiPoint3& a_collarAnchor, const RE::NiPoint3& a_goal, RE::TESObjectCELL* a_goalCell, float a_minLength, float a_maxLength, float a_deltaTime);
+        void Update(State& a_state, RE::Actor& a_actor, const RE::NiPoint3& a_collarAnchor, const RE::NiPoint3& a_anchor, float a_ropeLength, const RE::NiPoint3& a_goal, RE::TESObjectCELL* a_goalCell, float a_minLength, float a_maxLength, float a_deltaTime);
+        void ResetMotion(State& a_state);
         bool Release(State& a_state, RE::Actor* a_actor);
 
         bool _diagnosticsEnabled{};

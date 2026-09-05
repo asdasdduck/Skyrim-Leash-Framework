@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numeric>
 #include <string_view>
 
 #include "../Movement/DirectLocomotion.h"
@@ -163,6 +164,7 @@ namespace LeashFramework {
             Movement::LogDirectLocomotionState(*leashed, "leash tick after bind");
         }
         ReadNeutralPose();
+        const auto ropeLength = std::accumulate(_segmentLengths.begin(), _segmentLengths.end(), 0.0F);
         const auto& collarAnchor = holderOwnsMesh ? anchor->position : _neutralPositions.front();
         const auto& leasherAnchor = holderOwnsMesh ? _neutralPositions.front() : anchor->position;
         const auto anchorDistance = collarAnchor.GetDistance(leasherAnchor);
@@ -181,10 +183,17 @@ namespace LeashFramework {
         if (forcedRecoveryActive) {
             _pullController.Release(_pullState, leashed.get());
         } else {
-            _pullController.Update(_pullState, *leashed, collarAnchor, pullGoal, pullGoalCell, _definition.minLength, _definition.maxLength, a_deltaTime);
+            _pullController.Update(_pullState, *leashed, collarAnchor, leasherAnchor, ropeLength, pullGoal, pullGoalCell, _definition.minLength, _definition.maxLength, a_deltaTime);
         }
 
-        _pullPoseController.Prepare(_pullPoseState, *leashed, collarAnchor, a_deltaTime, !forcedRecoveryActive);
+        auto poseLeasherAnchor = leasherAnchor;
+        const auto* leasherNode = holderOwnsMesh ? _bones.front().get() : anchor->poseReference;
+        if (a_holderPoseSource && leasherNode) {
+            auto rotation = leasherNode->world.rotate;
+            a_holderPoseSource->TransformPreparedPose(*leasherNode, poseLeasherAnchor, rotation);
+        }
+        const auto* collarNode = holderOwnsMesh ? anchor->poseReference : _bones.front().get();
+        _pullPoseController.Prepare(_pullPoseState, *leashed, collarNode, collarAnchor, poseLeasherAnchor, ropeLength, a_deltaTime, !forcedRecoveryActive);
         auto posedNeutralPositions = _neutralPositions;
         auto posedNeutralRotations = _neutralRotations;
         // The actor wearing the leash can also be getting leaned by their own leash, so use that pose instead of pretending the mesh stayed where it was
@@ -201,9 +210,6 @@ namespace LeashFramework {
             auto posedEndRotation = anchor->poseReference->world.rotate;
             anchorPoseSource->TransformPreparedPose(*anchor->poseReference, posedEndAnchor, posedEndRotation);
         }
-        const auto& posedCollarAnchor = holderOwnsMesh ? posedEndAnchor : posedNeutralPositions.front();
-        const auto& posedLeasherAnchor = holderOwnsMesh ? posedNeutralPositions.front() : posedEndAnchor;
-
         RE::bhkWorld* world{};
         if (auto* cell = leashed->GetParentCell()) {
             world = cell->GetbhkWorld();
@@ -213,7 +219,7 @@ namespace LeashFramework {
         if (!forcedRecoveryActive && positions.size() >= 2) {
             const auto& collar = holderOwnsMesh ? positions.back() : positions.front();
             const auto& nextRopePoint = holderOwnsMesh ? positions[positions.size() - 2] : positions[1];
-            _pullPoseController.Capture(_pullPoseState, collar, nextRopePoint, posedCollarAnchor.GetDistance(posedLeasherAnchor), _definition.minLength, _definition.maxLength);
+            _pullPoseController.Capture(_pullPoseState, collar, nextRopePoint);
         }
         if (positions.size() == _bones.size()) {
             ApplyPose(posedNeutralPositions, posedNeutralRotations);
@@ -225,11 +231,13 @@ namespace LeashFramework {
 
     void LeashInstance::FreezeSimulation() {
         _solver.Freeze();
+        _pullController.ResetMotion(_pullState);
         _pullPoseController.Freeze(_pullPoseState);
     }
 
     void LeashInstance::ResetSimulation() {
         _solver.Reset();
+        _pullController.ResetMotion(_pullState);
         _pullPoseController.Reset(_pullPoseState);
         _deferredTranslations.clear();
         _deferredRotations.clear();
@@ -338,6 +346,7 @@ namespace LeashFramework {
     }
 
     void LeashInstance::ResetBinding() {
+        _pullController.ResetMotion(_pullState);
         _bones.clear();
         _boundMeshRoot.reset();
         _neutralPositions.clear();
