@@ -6,6 +6,11 @@
 namespace LeashFramework::Hooks {
     namespace {
         float& deltaTimeStub = *reinterpret_cast<float*>(REL::VariantID(523660, 410199, 0x30C3A08).address());
+
+        [[nodiscard]] bool ShouldSuppressGreeting(RE::Actor* a_actor) {
+            auto& manager = LeashManager::GetSingleton();
+            return manager.IsLeashed(a_actor) || manager.IsLeashed(RE::PlayerCharacter::GetSingleton());
+        }
     }
 
     void FrameHook::Install() {
@@ -21,6 +26,7 @@ namespace LeashFramework::Hooks {
         _originalFrameUpdate = trampoline.write_call<5>(address + frameUpdateOffset, OnFrameUpdate);
         _originalLateFrameUpdate = trampoline.write_call<5>(address + lateFrameUpdateOffset, OnLateFrameUpdate);
         InstallAIControlledCameraFreedomHook();
+        InstallGreetingSuppressionHook();
         installed = true;
         SKSE::log::info("Installed frame hooks");
     }
@@ -40,6 +46,27 @@ namespace LeashFramework::Hooks {
 
         _originalCameraTargetMovementSpeed = callSite.write_call<5>(OverrideCameraTargetMovementSpeed);
         SKSE::log::info("Installed AI-controlled camera freedom hook");
+    }
+
+    void FrameHook::InstallGreetingSuppressionHook() {
+        if (REL::Module::IsAE()) {
+            SKSE::log::warn("Greeting suppression hook is not implemented for AE");
+            return;
+        }
+        if (!REL::Module::IsSE()) {
+            SKSE::log::warn("Greeting suppression hook is not implemented for VR");
+            return;
+        }
+
+        REL::Relocation<std::uintptr_t> callSite{REL::ID(38601).address() + 0x1C2};
+        constexpr std::array<std::uint8_t, 5> expectedCall{0xE8, 0xD9, 0xB2, 0xC3, 0xFF};
+        if (!REL::verify_code(callSite.address(), expectedCall.data(), expectedCall.size())) {
+            SKSE::log::critical("Unexpected SE greeting-distance call");
+            return;
+        }
+
+        _originalGreetingDistance = callSite.write_call<5>(OverrideGreetingDistance);
+        SKSE::log::info("Installed SE greeting suppression hook");
     }
 
     void FrameHook::OnFrameUpdate() {
@@ -64,5 +91,10 @@ namespace LeashFramework::Hooks {
             return 0.0F;
         }
         return speed;
+    }
+
+    float FrameHook::OverrideGreetingDistance(RE::TESObjectREFR* a_source, RE::Actor* a_target, bool a_ignoreDisabled, bool a_ignoreCell) {
+        const float distanceSquared = _originalGreetingDistance(a_source, a_target, a_ignoreDisabled, a_ignoreCell);
+        return ShouldSuppressGreeting(a_target) ? (std::numeric_limits<float>::max)() : distanceSquared;
     }
 }  // namespace LeashFramework::Hooks

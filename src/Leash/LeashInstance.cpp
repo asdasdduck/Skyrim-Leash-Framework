@@ -113,8 +113,9 @@ namespace LeashFramework {
         return releasedPull || releasedRecovery;
     }
 
-    // Todo: Clean up this constant statement swap jank. Such logic should be abstracted 
-    void LeashInstance::Tick(float a_deltaTime, const Physics::SimulationSettings& a_settings, const Physics::ActorBodyCollision* a_actorCollision, bool a_allowForcedRecovery) {
+    // Todo: Clean up this constant statement swap jank. Such logic should be abstracted
+    void LeashInstance::Tick(float a_deltaTime, const Physics::SimulationSettings& a_settings, const Physics::ActorBodyCollision* a_actorCollision, bool a_allowForcedRecovery,
+        const LeashInstance* a_holderPoseSource) {
         LF_PROFILE_SCOPE("Leash/Tick");
         if (!std::isfinite(a_deltaTime) || a_deltaTime <= 0.0F) {
             return;
@@ -186,13 +187,19 @@ namespace LeashFramework {
         _pullPoseController.Prepare(_pullPoseState, *leashed, collarAnchor, a_deltaTime, !forcedRecoveryActive);
         auto posedNeutralPositions = _neutralPositions;
         auto posedNeutralRotations = _neutralRotations;
+        // The actor wearing the leash can also be getting leaned by their own leash, so use that pose instead of pretending the mesh stayed where it was
+        const auto* meshPoseSource = holderOwnsMesh ? a_holderPoseSource : this;
         for (std::size_t index = 0; index < _bones.size(); ++index) {
-            _pullPoseController.Transform(_pullPoseState, *_bones[index], posedNeutralPositions[index], posedNeutralRotations[index]);
+            if (meshPoseSource) {
+                meshPoseSource->TransformPreparedPose(*_bones[index], posedNeutralPositions[index], posedNeutralRotations[index]);
+            }
         }
         auto posedEndAnchor = anchor->position;
-        if (holderOwnsMesh && anchor->poseReference) {
+        // Same thing for the other end. This is what keeps a leash attached to the neck when that actor's leash makes them lean
+        const auto* anchorPoseSource = holderOwnsMesh ? this : a_holderPoseSource;
+        if (anchorPoseSource && anchor->poseReference) {
             auto posedEndRotation = anchor->poseReference->world.rotate;
-            _pullPoseController.Transform(_pullPoseState, *anchor->poseReference, posedEndAnchor, posedEndRotation);
+            anchorPoseSource->TransformPreparedPose(*anchor->poseReference, posedEndAnchor, posedEndRotation);
         }
         const auto& posedCollarAnchor = holderOwnsMesh ? posedEndAnchor : posedNeutralPositions.front();
         const auto& posedLeasherAnchor = holderOwnsMesh ? posedNeutralPositions.front() : posedEndAnchor;
@@ -387,6 +394,10 @@ namespace LeashFramework {
                 _segmentLengths[index - 1] = _neutralPositions[index - 1].GetDistance(_neutralPositions[index]);
             }
         }
+    }
+
+    void LeashInstance::TransformPreparedPose(const RE::NiAVObject& a_object, RE::NiPoint3& a_position, RE::NiMatrix3& a_rotation) const {
+        _pullPoseController.Transform(_pullPoseState, a_object, a_position, a_rotation);
     }
 
     void LeashInstance::ApplyPose(std::span<const RE::NiPoint3> a_neutralPositions, std::span<const RE::NiMatrix3> a_neutralRotations) {

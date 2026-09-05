@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 
 #include "../PCH.h"
@@ -267,6 +268,7 @@ namespace LeashFramework {
             SendLeashEvent("LeashFramework_OnUnleash", "replaced", leashedFormID);
         }
         _leashes.push_back(std::make_unique<LeashInstance>(std::move(definition), _pullController, _recoveryController, _pullPoseController));
+        SortByPoseDependencies();
         RefreshActorFactions(affectedActorFormIDs);
         SendLeashEvent("LeashFramework_OnLeash", replaced ? "replaced" : "applied", leashedFormID);
         SKSE::log::info("Applied leash to {:08X}", leashedFormID);
@@ -448,13 +450,20 @@ namespace LeashFramework {
             _actorBodyCollision.Update(_settings.actorBodyCollision);
             actorCollision = &_actorBodyCollision;
         }
+        // Only put poses in here after their leash has ticked. Since the list is sorted, actors farther down the train can use the pose their holder just prepared
+        std::unordered_map<RE::FormID, LeashInstance*> preparedPoses;
+        preparedPoses.reserve(_leashes.size());
         for (auto& leash : _leashes) {
+            const auto& definition = leash->GetDefinition();
+            const auto holderPose = preparedPoses.find(definition.holderFormID);
+            const auto* holderPoseSource = holderPose != preparedPoses.end() ? holderPose->second : nullptr;
             const auto teleportResult = _teleportController.Update(*leash, a_deltaTime);
             if (teleportResult == LeashTeleportController::UpdateResult::kTeleported) {
                 leash->ReleaseControl();
             } else {
-                leash->Tick(a_deltaTime, _settings, actorCollision, teleportResult != LeashTeleportController::UpdateResult::kPending);
+                leash->Tick(a_deltaTime, _settings, actorCollision, teleportResult != LeashTeleportController::UpdateResult::kPending, holderPoseSource);
             }
+            preparedPoses.insert_or_assign(definition.leashedFormID, leash.get());
         }
         if (actorCollision && UI::ModMenu::IsActorCollisionDebugEnabled()) {
             _actorBodyCollision.DrawDebug();
@@ -540,11 +549,66 @@ namespace LeashFramework {
             loadedActorFormIDs.push_back(leashedFormID);
             ++loaded;
         }
+        SortByPoseDependencies();
         RefreshActorFactions(affectedActorFormIDs);
         for (const auto leashedFormID : loadedActorFormIDs) {
             SendLeashEvent("LeashFramework_OnLeash", "loaded", leashedFormID);
         }
         SKSE::log::info("Loaded {} persistent leash(es)", loaded);
+    }
+
+    void LeashManager::SortByPoseDependencies() {
+        // A holder's own leash needs to tick first, otherwise anything attached to their bones gets solved before their lean is known
+        std::vector<std::size_t> indegrees(_leashes.size());
+        for (std::size_t dependent = 0; dependent < _leashes.size(); ++dependent) {
+            const auto holderFormID = _leashes[dependent]->GetDefinition().holderFormID;
+            if (holderFormID == 0) {
+                continue;
+            }
+            for (std::size_t provider = 0; provider < _leashes.size(); ++provider) {
+                if (_leashes[provider]->GetDefinition().leashedFormID == holderFormID) {
+                    ++indegrees[dependent];
+                    break;
+                }
+            }
+        }
+
+        std::vector<std::size_t> order;
+        order.reserve(_leashes.size());
+        std::vector<bool> emitted(_leashes.size());
+        while (order.size() < _leashes.size()) {
+            bool madeProgress{};
+            for (std::size_t provider = 0; provider < _leashes.size(); ++provider) {
+                if (emitted[provider] || indegrees[provider] != 0) {
+                    continue;
+                }
+                emitted[provider] = true;
+                order.push_back(provider);
+                madeProgress = true;
+                const auto providedActorFormID = _leashes[provider]->GetDefinition().leashedFormID;
+                for (std::size_t dependent = 0; dependent < _leashes.size(); ++dependent) {
+                    if (!emitted[dependent] && _leashes[dependent]->GetDefinition().holderFormID == providedActorFormID) {
+                        --indegrees[dependent];
+                    }
+                }
+            }
+            if (!madeProgress) {
+                // There is a loop somewhere. Break one link and keep sorting; cyclic leashes being a little off is better than messing up everything after them too
+                for (std::size_t index = 0; index < _leashes.size(); ++index) {
+                    if (!emitted[index]) {
+                        indegrees[index] = 0;
+                        break;
+                    }
+                }
+            }
+        }
+
+        std::vector<std::unique_ptr<LeashInstance>> sorted;
+        sorted.reserve(_leashes.size());
+        for (const auto index : order) {
+            sorted.push_back(std::move(_leashes[index]));
+        }
+        _leashes = std::move(sorted);
     }
 
     bool LeashManager::IsValid(const LeashDefinition& a_definition) {

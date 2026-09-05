@@ -15,12 +15,15 @@ namespace LeashFramework::Hooks {
 
     private:
         static void InstallAIControlledCameraFreedomHook();
+        static void InstallGreetingSuppressionHook();
         static void OnFrameUpdate();
         static void OnLateFrameUpdate(void* a_this);
         static float OverrideCameraTargetMovementSpeed(RE::Actor* a_target);
+        static float OverrideGreetingDistance(RE::TESObjectREFR* a_source, RE::Actor* a_target, bool a_ignoreDisabled, bool a_ignoreCell);
         inline static REL::Relocation<decltype(OnFrameUpdate)> _originalFrameUpdate;
         inline static REL::Relocation<decltype(OnLateFrameUpdate)> _originalLateFrameUpdate;
         inline static REL::Relocation<float (*)(RE::Actor*)> _originalCameraTargetMovementSpeed;
+        inline static REL::Relocation<decltype(OverrideGreetingDistance)> _originalGreetingDistance;
         inline static FrameHookSettings _settings;
     };
 }  // namespace LeashFramework::Hooks

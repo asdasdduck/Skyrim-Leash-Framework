@@ -65,6 +65,7 @@ namespace LeashFramework {
         RE::BSEventNotifyControl ProcessEvent(const RE::TESObjectLoadedEvent* a_event, RE::BSTEventSource<RE::TESObjectLoadedEvent>* a_eventSource) override;
         [[nodiscard]] bool ApplyDefinition(LeashDefinition a_definition);
         [[nodiscard]] static bool IsValid(const LeashDefinition& a_definition);
+        void SortByPoseDependencies();
         void RefreshActorFactions(const std::vector<RE::FormID>& a_actorFormIDs);
         void RefreshLoadedActorFactions();
 

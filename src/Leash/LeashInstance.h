@@ -27,7 +27,8 @@ namespace LeashFramework {
         void SetMaxLength(float a_length) noexcept;
         bool ReleasePull();
         bool ReleaseControl();
-        void Tick(float a_deltaTime, const Physics::SimulationSettings& a_settings, const Physics::ActorBodyCollision* a_actorCollision, bool a_allowForcedRecovery);
+        void Tick(float a_deltaTime, const Physics::SimulationSettings& a_settings, const Physics::ActorBodyCollision* a_actorCollision, bool a_allowForcedRecovery,
+            const LeashInstance* a_holderPoseSource);
         void FreezeSimulation();
         void ResetSimulation();
         void ApplyDeferredPose();
@@ -39,6 +40,7 @@ namespace LeashFramework {
         void ResetBinding();
         void ReadNeutralPose();
         void UpdateGeometryWorldBounds();
+        void TransformPreparedPose(const RE::NiAVObject& a_object, RE::NiPoint3& a_position, RE::NiMatrix3& a_rotation) const;
         void ApplyPose(std::span<const RE::NiPoint3> a_neutralPositions, std::span<const RE::NiMatrix3> a_neutralRotations);
 
         LeashDefinition _definition;
