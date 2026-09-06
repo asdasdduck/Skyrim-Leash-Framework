@@ -15,7 +15,8 @@ event was sent. OnLeash uses "applied", "replaced", or "loaded". OnUnleash uses 
 while starting or loading a game does not send OnUnleash.
 
 Pull mod events:
-- LeashFramework_OnActorPulled: sent once when normal direct-locomotion pulling starts.
+- LeashFramework_OnActorPulled: sent once when normal direct-locomotion pulling starts, including following
+  an actor holder before maxLength is reached.
 - LeashFramework_OnActorRagdollPulled: sent once when forced ragdoll pulling starts.
 
 Register for these events with RegisterForModEvent. Both pull events use the leashed Actor as sender, leave
@@ -32,8 +33,9 @@ leashed: Actor wearing the leash mesh. An actor can have only one active leash.
 parentBone: Exact node name to find on the leashed actor before searching its descendants.
 leashBoneMatch: Text found anywhere in each ordered leash bone name beneath parentBone. For example,
 Main_ matches hdtSSEPhysics_AutoRename_Armor_00000004 Main_01 after SMP renames the node.
-minLength: Distance where active leash pulling stops. Must be zero or greater.
-maxLength: Maximum holder-to-collar distance. Must be positive and at least minLength.
+minLength: Settling distance when the holder stops, with a small arrival tolerance. Must be zero or greater.
+maxLength: Catch-up boundary. Must be positive and at least minLength. Actor-held leashes can start following
+before this distance; while the holder moves, the target gap is 40% of the way from minLength to maxLength.
 persistent: When true, the leash is saved and restored until explicitly disconnected.
 
 Applying another leash to the same leashed actor replaces its current leash.
@@ -88,7 +90,8 @@ Connects a holderless leash from a fixed position to leash bones on an actor.
 anchorCell: Cell containing the world-space position. It must correspond to the supplied coordinates.
 x, y, z: Fixed world-space coordinates of the leash anchor.
 All other arguments and replacement behavior match ApplyLeash.
-Pull distances are measured from the fixed anchor instead of a holder.
+Pull distances are measured from the fixed anchor instead of a holder. Unlike actor-held following,
+pulling starts only beyond maxLength and stops upon returning to minLength.
 
 World-position leashes do not assign LeasherFaction, have no result from GetLeashHolder, and do not
 use holder teleport recovery. Use DisconnectLeash(None, leashed) to disconnect one.

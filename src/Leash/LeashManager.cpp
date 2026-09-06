@@ -78,6 +78,10 @@ namespace LeashFramework {
         _settings = a_settings;
     }
 
+    LocomotionSettings LeashManager::GetLocomotionSettings() const { return _pullController.GetSettings(); }
+
+    void LeashManager::SetLocomotionSettings(LocomotionSettings a_settings) { _pullController.SetSettings(a_settings); }
+
     Recovery::ForcedRecoverySettings LeashManager::GetRecoverySettings() const { return _recoveryController.GetSettings(); }
 
     void LeashManager::SetRecoverySettings(Recovery::ForcedRecoverySettings a_settings) { _recoveryController.SetSettings(a_settings); }

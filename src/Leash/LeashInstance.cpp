@@ -183,7 +183,7 @@ namespace LeashFramework {
         if (forcedRecoveryActive) {
             _pullController.Release(_pullState, leashed.get());
         } else {
-            _pullController.Update(_pullState, *leashed, collarAnchor, leasherAnchor, ropeLength, pullGoal, pullGoalCell, _definition.minLength, _definition.maxLength, a_deltaTime);
+            _pullController.Update(_pullState, *leashed, collarAnchor, leasherAnchor, ropeLength, pullGoal, pullGoalCell, holder.get() != nullptr, _definition.minLength, _definition.maxLength, a_deltaTime);
         }
 
         auto poseLeasherAnchor = leasherAnchor;

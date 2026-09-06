@@ -63,6 +63,7 @@ namespace LeashFramework::UI::ModMenu {
         Hooks::FrameHookSettings frameHook;
         Physics::SimulationSettings simulation;
         Animation::PullPoseSettings pullPose;
+        LocomotionSettings locomotion;
         Recovery::ForcedRecoverySettings recovery;
         LeashTeleportSettings teleport;
         DebugSettings debug;
@@ -129,6 +130,7 @@ namespace LeashFramework::UI::ModMenu {
             auto& manager = LeashManager::GetSingleton();
             manager.SetSimulationSettings(settings.simulation);
             manager.SetPullPoseSettings(settings.pullPose);
+            manager.SetLocomotionSettings(settings.locomotion);
             manager.SetRecoverySettings(settings.recovery);
             manager.SetTeleportSettings(settings.teleport);
             Hooks::FrameHook::SetSettings(settings.frameHook);
@@ -145,6 +147,7 @@ namespace LeashFramework::UI::ModMenu {
             ModMenuSettings settings{.frameHook = Hooks::FrameHook::GetSettings(),
                 .simulation = manager.GetSimulationSettings(),
                 .pullPose = manager.GetPullPoseSettings(),
+                .locomotion = manager.GetLocomotionSettings(),
                 .recovery = manager.GetRecoverySettings(),
                 .teleport = manager.GetTeleportSettings(),
                 .debug = debugSettings};
@@ -663,7 +666,13 @@ namespace LeashFramework::UI::ModMenu {
             ImGuiMCP::InputText("Leash parent bone", debugSettings.parentBone, sizeof(debugSettings.parentBone));
             ImGuiMCP::InputText("Leash bone match", debugSettings.leashBoneMatch, sizeof(debugSettings.leashBoneMatch));
             ImGuiMCP::InputFloat("Minimum length", &debugSettings.minLength, 1.0F, 10.0F);
+            if (ImGuiMCP::IsItemHovered()) {
+                ImGuiMCP::SetTooltip("The player regains movement control at this distance, even while the holder moves. NPC followers settle here with a small arrival tolerance when the holder stops.\nWhile the holder moves, the preferred gap is configured under Locomotion. World-position leashes stop pulling at this distance.");
+            }
             ImGuiMCP::InputFloat("Maximum length", &debugSettings.maxLength, 1.0F, 10.0F);
+            if (ImGuiMCP::IsItemHovered()) {
+                ImGuiMCP::SetTooltip("Player pulling and world-position pulling begin only beyond this distance. Actor-held NPC followers can start earlier to keep pace.\nForced recovery also uses this length.");
+            }
             ImGuiMCP::Checkbox("Persistent", &debugSettings.persistent);
 
             if (ImGuiMCP::Button("Leash actor")) {
@@ -801,10 +810,53 @@ namespace LeashFramework::UI::ModMenu {
             ImGuiMCP::EndTabBar();
         }
 
+        void RenderLocomotionSettings(LocomotionSettings& a_settings) {
+            if (!ImGuiMCP::CollapsingHeader("Locomotion")) {
+                return;
+            }
+            ImGuiMCP::SliderFloat("Forward assistance", &a_settings.forwardAssistance, 0.0F, 3.0F, "%.2f");
+            if (ImGuiMCP::IsItemHovered()) {
+                ImGuiMCP::SetTooltip(
+                    "Extra catch-up speed when the leashed player presses toward the pull path (usually W when facing the holder).\n"
+                    "Higher values help you reach minimum leash length and regain movement control sooner. Zero disables this boost.\n"
+                    "Default: 1.00. Range: 0.00-3.00. A speed of 2.00 is the controller's running-speed reference.");
+            }
+            ImGuiMCP::SliderFloat("Backward resistance", &a_settings.backwardResistance, 0.0F, 3.0F, "%.2f");
+            if (ImGuiMCP::IsItemHovered()) {
+                ImGuiMCP::SetTooltip(
+                    "Reduces pull speed when the leashed player presses against the pull direction (usually S when facing the holder).\n"
+                    "Higher values make resisting more effective, subject to the minimum forced-pull ratio. Zero disables input resistance.\n"
+                    "Default: 1.50. Range: 0.00-3.00. Uses the same speed units as forward assistance.");
+            }
+            ImGuiMCP::SliderFloat("Minimum forced-pull ratio", &a_settings.minimumForcedPullRatio, 0.0F, 1.0F, "%.2f");
+            if (ImGuiMCP::IsItemHovered()) {
+                ImGuiMCP::SetTooltip(
+                    "The fraction of automatic pull speed that player resistance cannot remove at maximum leash length or beyond.\n"
+                    "This floor fades toward zero near minimum length. Higher values make a taut leash harder to resist.\n"
+                    "Default: 0.50 (50%%). Range: 0.00-1.00. Zero removes the floor; it does not disable pulling or ragdoll recovery.");
+            }
+            ImGuiMCP::SliderFloat("Maximum catch-up speed", &a_settings.maximumCatchUpSpeed, 0.25F, 10.0F, "%.2f");
+            if (ImGuiMCP::IsItemHovered()) {
+                ImGuiMCP::SetTooltip(
+                    "Caps automatic locomotion speed for leashed players and NPCs. Higher values let them catch faster holders more quickly.\n"
+                    "Player forward assistance can raise the final cap by its configured amount. Very low values can prevent catching up.\n"
+                    "Default: 3.00. Range: 0.25-5.00. A speed of 2.00 is the controller's running-speed reference. Does not affect ragdoll pulling.");
+            }
+            ImGuiMCP::SliderFloat("Moving follow gap", &a_settings.movingFollowGap, 0.0F, 1.0F, "%.2f");
+            if (ImGuiMCP::IsItemHovered()) {
+                ImGuiMCP::SetTooltip(
+                    "Preferred distance while an actor holder moves, expressed as a fraction between minimum and maximum leash length.\n"
+                    "Zero targets minimum length; one targets maximum length. Lower values keep followers closer.\n"
+                    "Default: 0.40 (40%%). For minimum 200 and maximum 300, this targets 240 units.\n"
+                    "Player forward assistance can close this gap. Does not change player pull/release thresholds or world-position anchors.");
+            }
+        }
+
         void __stdcall RenderSettingsPage() {
             auto& manager = LeashManager::GetSingleton();
             auto simulation = manager.GetSimulationSettings();
             auto pullPose = manager.GetPullPoseSettings();
+            auto locomotion = manager.GetLocomotionSettings();
             auto recovery = manager.GetRecoverySettings();
             auto teleport = manager.GetTeleportSettings();
             auto frameHook = Hooks::FrameHook::GetSettings();
@@ -859,6 +911,7 @@ namespace LeashFramework::UI::ModMenu {
                 "leashed actor. "
                 "Solve iterations range from 1 to 128; higher values make the rope more rigid at greater performance cost.");
             ImGuiMCP::Spacing();
+            RenderLocomotionSettings(locomotion);
             if (ImGuiMCP::CollapsingHeader("Advanced Physics")) {
                 ImGuiMCP::InputFloat3("Gravity (X, Y, Z)", &simulation.gravity.x, "%.1f");
                 if (ImGuiMCP::IsItemHovered()) {
@@ -885,6 +938,7 @@ namespace LeashFramework::UI::ModMenu {
             RenderActorBodyCollisionSettings(simulation.actorBodyCollision);
             manager.SetSimulationSettings(std::move(simulation));
             manager.SetPullPoseSettings(pullPose);
+            manager.SetLocomotionSettings(locomotion);
             manager.SetRecoverySettings(recovery);
             manager.SetTeleportSettings(teleport);
             Hooks::FrameHook::SetSettings(frameHook);

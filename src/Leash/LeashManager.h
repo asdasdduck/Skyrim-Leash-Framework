@@ -40,6 +40,8 @@ namespace LeashFramework {
         [[nodiscard]] bool SetMaxLength(RE::Actor* a_leashed, float a_length);
         [[nodiscard]] Physics::SimulationSettings GetSimulationSettings() const;
         void SetSimulationSettings(Physics::SimulationSettings a_settings);
+        [[nodiscard]] LocomotionSettings GetLocomotionSettings() const;
+        void SetLocomotionSettings(LocomotionSettings a_settings);
         [[nodiscard]] Recovery::ForcedRecoverySettings GetRecoverySettings() const;
         void SetRecoverySettings(Recovery::ForcedRecoverySettings a_settings);
         [[nodiscard]] LeashTeleportSettings GetTeleportSettings() const;
