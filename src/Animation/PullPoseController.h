@@ -14,10 +14,10 @@ namespace LeashFramework::Animation {
         bool enabled{true};
         float minimumStrength{0.3F};
         float maximumStrength{1.0F};
-        float maximumAngleDegrees{30.0F};
+        float maximumAngleDegrees{50.0F};
         float responseRate{12.0F};
-        float anticipationTime{0.12F};
-        float slackReserveRatio{0.03F};
+        float anticipationTime{0.0F};
+        float slackReserveRatio{0.0F};
     };
 
     class PullPoseController {
