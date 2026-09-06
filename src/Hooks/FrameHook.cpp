@@ -11,7 +11,7 @@ namespace LeashFramework::Hooks {
             auto& manager = LeashManager::GetSingleton();
             return manager.IsLeashed(a_actor) || manager.IsLeashed(RE::PlayerCharacter::GetSingleton());
         }
-    }
+    }  // namespace
 
     void FrameHook::Install() {
         static bool installed{};
@@ -48,25 +48,29 @@ namespace LeashFramework::Hooks {
         SKSE::log::info("Installed AI-controlled camera freedom hook");
     }
 
+    // Todo: AE 1799 or whatever version
     void FrameHook::InstallGreetingSuppressionHook() {
-        if (REL::Module::IsAE()) {
-            SKSE::log::warn("Greeting suppression hook is not implemented for AE");
-            return;
-        }
-        if (!REL::Module::IsSE()) {
+        if (!REL::Module::IsSE() && !REL::Module::IsAE()) {
             SKSE::log::warn("Greeting suppression hook is not implemented for VR");
             return;
         }
 
-        REL::Relocation<std::uintptr_t> callSite{REL::ID(38601).address() + 0x1C2};
-        constexpr std::array<std::uint8_t, 5> expectedCall{0xE8, 0xD9, 0xB2, 0xC3, 0xFF};
-        if (!REL::verify_code(callSite.address(), expectedCall.data(), expectedCall.size())) {
-            SKSE::log::critical("Unexpected SE greeting-distance call");
+        REL::Relocation<std::uintptr_t> callSite{REL::RelocationID(38601, 39632), 0x1C2};
+
+        constexpr std::array<std::uint8_t, 5> expectedSE{0xE8, 0xD9, 0xB2, 0xC3, 0xFF};
+
+        constexpr std::array<std::uint8_t, 5> expectedAE{0xE8, 0xB9, 0xC3, 0xBF, 0xFF};
+
+        const auto& expected = REL::Module::IsAE() ? expectedAE : expectedSE;
+
+        if (!REL::verify_code(callSite.address(), expected.data(), expected.size())) {
+            SKSE::log::critical("Unexpected greeting-distance call");
             return;
         }
 
         _originalGreetingDistance = callSite.write_call<5>(OverrideGreetingDistance);
-        SKSE::log::info("Installed SE greeting suppression hook");
+
+        SKSE::log::info("Installed greeting suppression hook");
     }
 
     void FrameHook::OnFrameUpdate() {
