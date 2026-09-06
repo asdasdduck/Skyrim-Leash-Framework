@@ -32,11 +32,13 @@ namespace LeashFramework::Physics {
         _blockedContactTimes.clear();
         _collisionReleaseTimes.clear();
         _collisionReleased.clear();
+        _previousSubstepTime = 0.0F;
     }
 
     void RopeSolver::Freeze() {
         _previousPositions = _positions;
         _substepStart = _positions;
+        _previousSubstepTime = 0.0F;
     }
 
     const std::vector<RE::NiPoint3>& RopeSolver::GetPositions() const { return _positions; }
@@ -60,8 +62,12 @@ namespace LeashFramework::Physics {
             _blockedContactTimes.assign(_positions.size(), 0.0F);
             _collisionReleaseTimes.assign(_positions.size(), 0.0F);
             _collisionReleased.assign(_positions.size(), false);
+            _previousSubstepTime = 0.0F;
         }
 
+        if (!std::isfinite(a_deltaTime)) {
+            return _positions;
+        }
         const auto frameTime = std::clamp(a_deltaTime, 0.0F, kMaximumDeltaTime);
         if (frameTime <= 0.0F) {
             return _positions;
@@ -72,24 +78,32 @@ namespace LeashFramework::Physics {
         const auto substepCount = (std::max)(1U, static_cast<std::uint32_t>(std::ceil(stableSubstepRatio)));
         const auto substepTime = substepCount > 0 ? frameTime / static_cast<float>(substepCount) : 0.0F;
         const auto startAnchor = a_neutralPositions.front();
+        const auto previousStartAnchor = _previousSubstepTime > 0.0F ? _positions.front() : startAnchor;
+        const auto previousEndAnchor = _previousSubstepTime > 0.0F ? _positions.back() : a_endAnchor;
         const auto substepDamping = std::pow(a_settings.damping, substepTime / kReferenceDampingTime);
         const auto complianceScale = a_settings.stretchCompliance / (substepTime * substepTime);
 
         for (std::uint32_t step = 0; step < substepCount; ++step) {
             const auto actorInterpolation = static_cast<float>(step + 1) / static_cast<float>(substepCount);
-            _positions.front() = startAnchor;
-            _positions.back() = a_endAnchor;
-            _previousPositions.front() = startAnchor;
-            _previousPositions.back() = a_endAnchor;
+            // Intermediate anchors follow the sampled motion; the final step pins both ends exactly.
+            const auto finalStep = step + 1 == substepCount;
+            const auto stepStartAnchor = finalStep ? startAnchor : previousStartAnchor + (startAnchor - previousStartAnchor) * actorInterpolation;
+            const auto stepEndAnchor = finalStep ? a_endAnchor : previousEndAnchor + (a_endAnchor - previousEndAnchor) * actorInterpolation;
+            _positions.front() = stepStartAnchor;
+            _positions.back() = stepEndAnchor;
+            _previousPositions.front() = stepStartAnchor;
+            _previousPositions.back() = stepEndAnchor;
             _substepStart = _positions;
             std::fill(_contactBlockedDistances.begin(), _contactBlockedDistances.end(), 0.0F);
 
+            // Stored Verlet displacement belongs to the preceding step's duration, which can change with frame pacing.
+            const auto velocityScale = _previousSubstepTime > 0.0F ? substepTime / _previousSubstepTime : 1.0F;
             for (std::size_t index = 1; index + 1 < _positions.size(); ++index) {
                 if (_collisionReleased[index]) {
                     _collisionReleaseTimes[index] += substepTime;
                 }
                 const auto current = _positions[index];
-                const auto velocity = (current - _previousPositions[index]) * substepDamping;
+                const auto velocity = (current - _previousPositions[index]) * (velocityScale * substepDamping);
                 _previousPositions[index] = current;
                 _positions[index] = current + velocity + a_settings.gravity * (substepTime * substepTime);
             }
@@ -97,7 +111,7 @@ namespace LeashFramework::Physics {
             ResolveCollisions(a_world, a_actorCollision, actorInterpolation, a_settings.collisionPadding, a_segmentLengths, 0.0F, a_settings.snagReleaseStrain, a_settings.snagBlockedDistance);
             std::fill(_constraintMultipliers.begin(), _constraintMultipliers.end(), 0.0F);
             for (std::uint32_t iteration = 0; iteration < a_settings.constraintIterations; ++iteration) {
-                ApplyConstraints(a_segmentLengths, startAnchor, a_endAnchor, complianceScale, iteration % 2 != 0);
+                ApplyConstraints(a_segmentLengths, stepStartAnchor, stepEndAnchor, complianceScale, iteration % 2 != 0);
                 if (iteration + 1 < a_settings.constraintIterations) {
                     for (std::size_t index = 1; index + 1 < _positions.size(); ++index) {
                         if (!_collisionReleased[index]) {
@@ -107,6 +121,7 @@ namespace LeashFramework::Physics {
                 }
             }
             ResolveCollisions(a_world, a_actorCollision, actorInterpolation, a_settings.collisionPadding, a_segmentLengths, substepTime, a_settings.snagReleaseStrain, a_settings.snagBlockedDistance);
+            _previousSubstepTime = substepTime;
         }
 
         return _positions;

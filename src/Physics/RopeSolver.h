@@ -38,6 +38,7 @@ namespace LeashFramework::Physics {
         std::vector<RE::NiPoint3> _positions;
         std::vector<RE::NiPoint3> _previousPositions;
         std::vector<RE::NiPoint3> _substepStart;
+        float _previousSubstepTime{};
         std::vector<float> _constraintMultipliers;
         std::vector<std::array<ContactConstraint, kMaximumContactConstraints>> _contactConstraints;
         std::vector<std::size_t> _contactConstraintCounts;
