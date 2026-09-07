@@ -20,6 +20,7 @@
 #include "../PCH.h"
 #include "../Recovery/ForcedRecoveryController.h"
 #include "DebugOverlay.h"
+#include "MenuLayout.h"
 
 template <>
 struct glz::meta<RE::NiPoint3> {
@@ -94,6 +95,7 @@ namespace LeashFramework::UI::ModMenu {
         std::vector<ActorOption> actorOptions;
         std::uint32_t selectedHolder{};
         std::uint32_t selectedLeashed{};
+        std::uint32_t selectedArmor{};
         DebugAnchorType selectedAnchorType{DebugAnchorType::kRightHand};
         char selectedAttachmentBone[128]{};
         RE::NiPoint3 selectedWorldPosition{};
@@ -101,7 +103,8 @@ namespace LeashFramework::UI::ModMenu {
         bool actorsLoaded{};
         bool actorCollisionDebugEnabled{};
         DebugSettings debugSettings;
-        std::string status;
+        std::string activeStatus;
+        std::string skeletonStatus;
         std::string applyStatus;
         std::string armorStatus;
         std::string settingsJson;
@@ -232,22 +235,25 @@ namespace LeashFramework::UI::ModMenu {
         void RenderActorDropdown(const char* a_label, std::uint32_t& a_selectedFormID) {
             const auto selected = std::ranges::find_if(actorOptions, [&](const ActorOption& a_actor) { return a_actor.formID == a_selectedFormID; });
             const char* preview = selected != actorOptions.end() ? selected->label.c_str() : "Select actor";
-            if (!ImGuiMCP::BeginCombo(a_label, preview)) {
-                return;
-            }
-
-            for (const auto& actor : actorOptions) {
-                ImGuiMCP::PushID(static_cast<int>(actor.formID));
-                const bool isSelected = actor.formID == a_selectedFormID;
-                if (ImGuiMCP::Selectable(actor.label.c_str(), isSelected)) {
-                    a_selectedFormID = actor.formID;
+            MenuLayout::Field(a_label, [&](const char* a_id) {
+                bool changed{};
+                if (ImGuiMCP::BeginCombo(a_id, preview)) {
+                    for (const auto& actor : actorOptions) {
+                        ImGuiMCP::PushID(static_cast<int>(actor.formID));
+                        const bool isSelected = actor.formID == a_selectedFormID;
+                        if (ImGuiMCP::Selectable(actor.label.c_str(), isSelected)) {
+                            a_selectedFormID = actor.formID;
+                            changed = true;
+                        }
+                        if (isSelected) {
+                            ImGuiMCP::SetItemDefaultFocus();
+                        }
+                        ImGuiMCP::PopID();
+                    }
+                    ImGuiMCP::EndCombo();
                 }
-                if (isSelected) {
-                    ImGuiMCP::SetItemDefaultFocus();
-                }
-                ImGuiMCP::PopID();
-            }
-            ImGuiMCP::EndCombo();
+                return changed;
+            });
         }
 
         [[nodiscard]] bool CapturePlayerWorldAnchor() {
@@ -392,20 +398,20 @@ namespace LeashFramework::UI::ModMenu {
             const auto meshOwnerFormID = debugSettings.holderOwnsLeash ? selectedHolder : selectedLeashed;
             auto* actor = RE::TESForm::LookupByID<RE::Actor>(meshOwnerFormID);
             if (!actor) {
-                status = "Select an available physical leash owner before dumping the skeleton.";
+                skeletonStatus = "Select an available physical leash owner before dumping the skeleton.";
                 return;
             }
 
             auto* root = actor->Get3D(false);
             if (!root) {
-                status = std::format("{} has no loaded third-person skeleton.", DescribeActor(actor));
+                skeletonStatus = std::format("{} has no loaded third-person skeleton.", DescribeActor(actor));
                 return;
             }
 
             auto* npcObject = root->GetObjectByName(RE::BSFixedString("NPC"));
             auto* npcNode = npcObject ? npcObject->AsNode() : nullptr;
             if (!npcNode) {
-                status = std::format("{} has no loaded NPC skeleton node.", DescribeActor(actor));
+                skeletonStatus = std::format("{} has no loaded NPC skeleton node.", DescribeActor(actor));
                 return;
             }
 
@@ -431,23 +437,28 @@ namespace LeashFramework::UI::ModMenu {
             skeletonDumpActor = DescribeActor(actor);
             std::size_t nodeCount{};
             skeletonDump = CaptureVisibleSkeleton(*npcNode, visibleBones, likelyCandidates, nodeCount);
-            status = std::format("Displayed {} skeleton node(s) for {}.", nodeCount, skeletonDumpActor);
+            skeletonStatus = std::format("Displayed {} skeleton node(s) for {}.", nodeCount, skeletonDumpActor);
         }
 
         void RenderSkeletonDumper() {
-            ImGuiMCP::SeparatorText("Skeleton visualizer");
-            ImGuiMCP::TextWrapped("Shows skinned bones beneath the physical leash owner's NPC node. Current parent and leash matches are highlighted.");
-            if (ImGuiMCP::Button("Dump physical owner's skeleton")) {
+            ImGuiMCP::SeparatorText("Skeleton inspector");
+            ImGuiMCP::TextWrapped("Inspect skinned bones on the selected physical leash owner. The test leash's parent and matching bones are highlighted.");
+            if (ImGuiMCP::Button("Capture skeleton")) {
                 DumpSelectedSkeleton();
             }
+            MenuLayout::Feedback(skeletonStatus);
             if (skeletonDump.empty()) {
                 return;
             }
 
-            ImGuiMCP::SameLine();
-            ImGuiMCP::TextUnformatted(skeletonDumpActor.c_str());
+            ImGuiMCP::TextWrapped("Snapshot: %s", skeletonDumpActor.c_str());
+            ImGuiMCP::SetNextItemWidth(-1.0F);
             ImGuiMCP::InputTextWithHint("##SkeletonFilter", "Filter bone names", skeletonFilter, sizeof(skeletonFilter));
-            if (ImGuiMCP::BeginChild("SkeletonDump", {0.0F, 1080.0F}, ImGuiMCP::ImGuiChildFlags_Border)) {
+            ImGuiMCP::ImVec2 available;
+            ImGuiMCP::GetContentRegionAvail(&available);
+            const auto lineHeight = ImGuiMCP::GetTextLineHeightWithSpacing();
+            const auto height = std::clamp(available.y, lineHeight * 8.0F, lineHeight * 24.0F);
+            if (ImGuiMCP::BeginChild("SkeletonDump", {0.0F, height}, ImGuiMCP::ImGuiChildFlags_Border)) {
                 const std::string_view filter{skeletonFilter};
                 for (const auto& root : skeletonDump) {
                     RenderSkeletonNode(root, filter);
@@ -456,15 +467,135 @@ namespace LeashFramework::UI::ModMenu {
             ImGuiMCP::EndChild();
         }
 
+        std::string DescribeArmor(RE::TESObjectARMO* a_armor) {
+            const auto* name = a_armor->GetName();
+            return std::format("{} ({:08X})", name && name[0] != '\0' ? name : "Unnamed armor", a_armor->GetFormID());
+        }
+
+        void EquipArmor(RE::Actor* a_actor, RE::TESObjectARMO* a_armor) {
+            if (!a_actor) {
+                armorStatus = "Select an available physical leash owner before equipping armor.";
+            } else if (!a_armor) {
+                armorStatus = "Select an available armor before equipping.";
+            } else if (auto* equipManager = RE::ActorEquipManager::GetSingleton(); !equipManager) {
+                armorStatus = "The actor equip manager is unavailable.";
+            } else {
+                const auto inventory = a_actor->GetInventoryCounts();
+                const auto item = inventory.find(a_armor);
+                if (item == inventory.end() || item->second <= 0) {
+                    a_actor->AddObjectToContainer(a_armor, nullptr, 1, nullptr);
+                }
+                equipManager->EquipObject(a_actor, a_armor, nullptr, 1, nullptr, true, true);
+                armorStatus = std::format("Equipped {} on {}.", DescribeArmor(a_armor), DescribeActor(a_actor));
+            }
+        }
+
+        void RenderPluginArmorDropdown() {
+            ImGuiMCP::SeparatorText("Browse Leash.esm");
+            auto* dataHandler = RE::TESDataHandler::GetSingleton();
+            const auto* plugin = dataHandler ? dataHandler->LookupModByName("Leash.esm") : nullptr;
+            if (!plugin || plugin->GetCompileIndex() == 0xFF) {
+                ImGuiMCP::TextUnformatted("Leash.esm armor is unavailable.");
+                return;
+            }
+
+            auto* armor = RE::TESForm::LookupByID<RE::TESObjectARMO>(selectedArmor);
+            if (armor && !plugin->IsFormInMod(armor->GetFormID())) {
+                armor = nullptr;
+            }
+            const auto preview = armor ? DescribeArmor(armor) : std::string{"Select armor"};
+            ImGuiMCP::SetNextItemWidth(-1.0F);
+            if (ImGuiMCP::BeginCombo("##PluginArmor", preview.c_str())) {
+                std::vector<RE::TESObjectARMO*> armors;
+                for (auto* candidate : dataHandler->GetFormArray<RE::TESObjectARMO>()) {
+                    if (candidate && plugin->IsFormInMod(candidate->GetFormID())) {
+                        armors.push_back(candidate);
+                    }
+                }
+                std::ranges::sort(armors, {}, DescribeArmor);
+                for (auto* candidate : armors) {
+                    ImGuiMCP::PushID(static_cast<int>(candidate->GetFormID()));
+                    const bool isSelected = candidate->GetFormID() == selectedArmor;
+                    const auto label = DescribeArmor(candidate);
+                    if (ImGuiMCP::Selectable(label.c_str(), isSelected)) {
+                        selectedArmor = candidate->GetFormID();
+                        armor = candidate;
+                    }
+                    if (isSelected) {
+                        ImGuiMCP::SetItemDefaultFocus();
+                    }
+                    ImGuiMCP::PopID();
+                }
+                if (armors.empty()) {
+                    ImGuiMCP::TextUnformatted("No armor found in Leash.esm.");
+                }
+                ImGuiMCP::EndCombo();
+            }
+            const auto actorFormID = debugSettings.holderOwnsLeash ? selectedHolder : selectedLeashed;
+            auto* actor = RE::TESForm::LookupByID<RE::Actor>(actorFormID);
+            ImGuiMCP::BeginDisabled(!armor || !actor);
+            if (ImGuiMCP::Button("Equip selected armor")) {
+                EquipArmor(actor, armor);
+            }
+            ImGuiMCP::EndDisabled();
+        }
+
+        void EquipArmorEntry(const ArmorEntry& entry) {
+            const auto meshOwnerFormID = debugSettings.holderOwnsLeash ? selectedHolder : selectedLeashed;
+            auto* meshOwner = RE::TESForm::LookupByID<RE::Actor>(meshOwnerFormID);
+            std::string_view formIDText{entry.formID};
+            if (const auto comment = formIDText.find('#'); comment != std::string_view::npos) {
+                formIDText = formIDText.substr(0, comment);
+            }
+            const auto firstCharacter = formIDText.find_first_not_of(" \t\r\n");
+            if (firstCharacter == std::string_view::npos) {
+                formIDText = {};
+            } else {
+                const auto lastCharacter = formIDText.find_last_not_of(" \t\r\n");
+                formIDText = formIDText.substr(firstCharacter, lastCharacter - firstCharacter + 1);
+            }
+            if (formIDText.starts_with("0x") || formIDText.starts_with("0X")) {
+                formIDText.remove_prefix(2);
+            }
+
+            std::uint32_t localFormID{};
+            const auto parseResult = std::from_chars(formIDText.data(), formIDText.data() + formIDText.size(), localFormID, 16);
+            if (!meshOwner) {
+                armorStatus = "Select an available physical leash owner before equipping armor.";
+            } else if (entry.modName[0] == '\0' || formIDText.empty()) {
+                armorStatus = "Enter a mod name and local FormID.";
+            } else if (parseResult.ec != std::errc{} || parseResult.ptr != formIDText.data() + formIDText.size()) {
+                armorStatus = std::format("{} is not a valid hexadecimal FormID.", entry.formID);
+            } else if (auto* dataHandler = RE::TESDataHandler::GetSingleton(); !dataHandler) {
+                armorStatus = "The game data handler is unavailable.";
+            } else if (const auto* plugin = dataHandler->LookupModByName(entry.modName); !plugin || plugin->GetCompileIndex() == 0xFF) {
+                armorStatus = std::format("Plugin {} is not loaded.", entry.modName);
+            } else {
+                const auto resolvedFormID = dataHandler->LookupFormID(localFormID, entry.modName);
+                auto* form = RE::TESForm::LookupByID(resolvedFormID);
+                if (!form) {
+                    armorStatus = std::format("Could not find {}:{:X}; resolved runtime FormID {:08X}.", entry.modName, localFormID, resolvedFormID);
+                } else if (!form->Is(RE::FormType::Armor)) {
+                    armorStatus = std::format("Found a {} record at {}:{:X}; equip requires an ARMO record.", RE::FormTypeToString(form->GetFormType()), entry.modName, localFormID);
+                } else {
+                    EquipArmor(meshOwner, static_cast<RE::TESObjectARMO*>(form));
+                }
+            }
+        }
+
         void RenderArmorEntries() {
-            ImGuiMCP::SeparatorText("Equip leash armor");
-            constexpr auto tableFlags = ImGuiMCP::ImGuiTableFlags_Borders | ImGuiMCP::ImGuiTableFlags_RowBg | ImGuiMCP::ImGuiTableFlags_SizingStretchSame;
+            ImGuiMCP::SeparatorText("Armor shortcuts");
+            const bool editEntries = ImGuiMCP::CollapsingHeader("Edit shortcuts");
+            if (editEntries) {
+                ImGuiMCP::TextWrapped("Use a plugin name and hexadecimal local FormID. Add # followed by a name to label a shortcut.");
+            }
+            constexpr auto tableFlags = ImGuiMCP::ImGuiTableFlags_BordersInnerH | ImGuiMCP::ImGuiTableFlags_RowBg | ImGuiMCP::ImGuiTableFlags_SizingStretchProp;
             if (!ImGuiMCP::BeginTable("LeashArmor", 3, tableFlags)) {
                 return;
             }
 
-            ImGuiMCP::TableSetupColumn("Mod name", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch);
-            ImGuiMCP::TableSetupColumn("ARMO Local FormID", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch);
+            ImGuiMCP::TableSetupColumn(editEntries ? "Plugin" : "Armor", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch);
+            ImGuiMCP::TableSetupColumn(editEntries ? "Local FormID #Name" : "Source", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch);
             ImGuiMCP::TableSetupColumn("", ImGuiMCP::ImGuiTableColumnFlags_WidthFixed);
             ImGuiMCP::TableHeadersRow();
             for (std::size_t index = 0; index < debugSettings.armorEntries.size(); ++index) {
@@ -472,210 +603,202 @@ namespace LeashFramework::UI::ModMenu {
                 ImGuiMCP::PushID(static_cast<int>(index));
                 ImGuiMCP::TableNextRow();
                 ImGuiMCP::TableSetColumnIndex(0);
-                ImGuiMCP::SetNextItemWidth(-1.0F);
-                ImGuiMCP::InputText("##ModName", entry.modName, sizeof(entry.modName));
-                ImGuiMCP::TableSetColumnIndex(1);
-                ImGuiMCP::SetNextItemWidth(-1.0F);
-                ImGuiMCP::InputText("##FormID", entry.formID, sizeof(entry.formID));
+                if (editEntries) {
+                    ImGuiMCP::SetNextItemWidth(-1.0F);
+                    ImGuiMCP::InputText("##ModName", entry.modName, sizeof(entry.modName));
+                    ImGuiMCP::TableSetColumnIndex(1);
+                    ImGuiMCP::SetNextItemWidth(-1.0F);
+                    ImGuiMCP::InputText("##FormID", entry.formID, sizeof(entry.formID));
+                } else {
+                    const std::string_view formID{entry.formID};
+                    const auto comment = formID.find('#');
+                    const auto name = comment != std::string_view::npos ? formID.substr(comment + 1) : formID;
+                    ImGuiMCP::TextWrapped("%.*s", static_cast<int>(name.size()), name.data());
+                    ImGuiMCP::TableSetColumnIndex(1);
+                    const auto localID = formID.substr(0, comment);
+                    ImGuiMCP::TextWrapped("%s / %.*s", entry.modName, static_cast<int>(localID.size()), localID.data());
+                }
                 ImGuiMCP::TableSetColumnIndex(2);
                 if (ImGuiMCP::Button("Equip")) {
-                    const auto meshOwnerFormID = debugSettings.holderOwnsLeash ? selectedHolder : selectedLeashed;
-                    auto* meshOwner = RE::TESForm::LookupByID<RE::Actor>(meshOwnerFormID);
-                    std::string_view formIDText{entry.formID};
-                    if (const auto comment = formIDText.find('#'); comment != std::string_view::npos) {
-                        formIDText = formIDText.substr(0, comment);
-                    }
-                    const auto firstCharacter = formIDText.find_first_not_of(" \t\r\n");
-                    if (firstCharacter == std::string_view::npos) {
-                        formIDText = {};
-                    } else {
-                        const auto lastCharacter = formIDText.find_last_not_of(" \t\r\n");
-                        formIDText = formIDText.substr(firstCharacter, lastCharacter - firstCharacter + 1);
-                    }
-                    if (formIDText.starts_with("0x") || formIDText.starts_with("0X")) {
-                        formIDText.remove_prefix(2);
-                    }
-
-                    std::uint32_t localFormID{};
-                    const auto parseResult = std::from_chars(formIDText.data(), formIDText.data() + formIDText.size(), localFormID, 16);
-                    if (!meshOwner) {
-                        armorStatus = "Select an available physical leash owner before equipping armor.";
-                    } else if (entry.modName[0] == '\0' || formIDText.empty()) {
-                        armorStatus = "Enter a mod name and local FormID.";
-                    } else if (parseResult.ec != std::errc{} || parseResult.ptr != formIDText.data() + formIDText.size()) {
-                        armorStatus = std::format("{} is not a valid hexadecimal FormID.", entry.formID);
-                    } else if (auto* dataHandler = RE::TESDataHandler::GetSingleton(); !dataHandler) {
-                        armorStatus = "The game data handler is unavailable.";
-                    } else if (const auto* plugin = dataHandler->LookupModByName(entry.modName); !plugin || plugin->GetCompileIndex() == 0xFF) {
-                        armorStatus = std::format("Plugin {} is not loaded.", entry.modName);
-                    } else {
-                        const auto resolvedFormID = dataHandler->LookupFormID(localFormID, entry.modName);
-                        auto* form = RE::TESForm::LookupByID(resolvedFormID);
-                        if (!form) {
-                            armorStatus = std::format("Could not find {}:{:X}; resolved runtime FormID {:08X}.", entry.modName, localFormID, resolvedFormID);
-                        } else if (!form->Is(RE::FormType::Armor)) {
-                            armorStatus = std::format("Found a {} record at {}:{:X}; equip requires an ARMO record.", RE::FormTypeToString(form->GetFormType()), entry.modName, localFormID);
-                        } else if (auto* equipManager = RE::ActorEquipManager::GetSingleton(); !equipManager) {
-                            armorStatus = "The actor equip manager is unavailable.";
-                        } else {
-                            auto* armor = static_cast<RE::TESObjectARMO*>(form);
-                            const auto inventory = meshOwner->GetInventoryCounts();
-                            const auto item = inventory.find(armor);
-                            if (item == inventory.end() || item->second <= 0) {
-                                meshOwner->AddObjectToContainer(armor, nullptr, 1, nullptr);
-                            }
-                            equipManager->EquipObject(meshOwner, armor, nullptr, 1, nullptr, true, true);
-                            const auto* armorName = armor->GetName();
-                            armorStatus = std::format("Equipped {} ({:08X}) on {}.", armorName && armorName[0] != '\0' ? armorName : "unnamed armor", resolvedFormID, DescribeActor(meshOwner));
-                        }
-                    }
+                    EquipArmorEntry(entry);
                 }
                 ImGuiMCP::PopID();
             }
             ImGuiMCP::EndTable();
-            if (!armorStatus.empty()) {
-                ImGuiMCP::Spacing();
-                ImGuiMCP::TextWrapped("%s", armorStatus.c_str());
+        }
+
+        void RenderActiveLeashLength(RE::Actor* a_leashed, float a_length, bool a_minimum) {
+            ImGuiMCP::SetNextItemWidth(-1.0F);
+            ImGuiMCP::BeginDisabled(!a_leashed);
+            if (ImGuiMCP::InputFloat(a_minimum ? "##MinLength" : "##MaxLength", &a_length, 1.0F, 10.0F, "%.1f", ImGuiMCP::ImGuiInputTextFlags_EnterReturnsTrue)) {
+                auto& manager = LeashManager::GetSingleton();
+                const bool updated = a_minimum ? manager.SetMinLength(a_leashed, a_length) : manager.SetMaxLength(a_leashed, a_length);
+                const auto label = a_minimum ? "Minimum" : "Maximum";
+                activeStatus = updated ? std::format("{} distance for {} set to {:.1f}.", label, DescribeActor(a_leashed), a_length)
+                                       : std::format("Could not update {} distance. Minimum must be non-negative, maximum must be positive, and minimum cannot exceed maximum.", a_minimum ? "minimum" : "maximum");
+            }
+            ImGuiMCP::EndDisabled();
+            if (ImGuiMCP::IsItemHovered()) {
+                ImGuiMCP::SetTooltip("%s", a_minimum ? "Release / arrival distance. Must be between zero and the current maximum."
+                                                   : "Maximum follow distance. Must be positive and at least the current minimum.");
             }
         }
 
-        void RenderActiveLeashes() {
+        void RenderActiveLeashes(const std::vector<LeashDefinition>& a_definitions) {
             ImGuiMCP::SeparatorText("Active leashes");
-            const auto definitions = LeashManager::GetSingleton().GetDefinitions();
-            if (definitions.empty()) {
+            if (a_definitions.empty()) {
                 ImGuiMCP::TextUnformatted("No actors are currently leashed.");
                 return;
             }
+            ImGuiMCP::TextWrapped("Adjust each leash's follow range below. Press Enter to apply a typed distance; +/- buttons apply immediately.");
 
-            constexpr auto tableFlags = ImGuiMCP::ImGuiTableFlags_Borders | ImGuiMCP::ImGuiTableFlags_RowBg | ImGuiMCP::ImGuiTableFlags_SizingStretchProp;
-            if (!ImGuiMCP::BeginTable("ActiveLeashes", 4, tableFlags)) {
+            constexpr auto tableFlags = ImGuiMCP::ImGuiTableFlags_BordersInnerH | ImGuiMCP::ImGuiTableFlags_RowBg | ImGuiMCP::ImGuiTableFlags_SizingStretchProp;
+            if (!ImGuiMCP::BeginTable("ActiveLeashes", 6, tableFlags)) {
                 return;
             }
 
             ImGuiMCP::TableSetupColumn("Leashed actor", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch);
             ImGuiMCP::TableSetupColumn("Leasher", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch);
             ImGuiMCP::TableSetupColumn("Physical owner", ImGuiMCP::ImGuiTableColumnFlags_WidthStretch);
+            ImGuiMCP::TableSetupColumn("Min distance", ImGuiMCP::ImGuiTableColumnFlags_WidthFixed, ImGuiMCP::GetFontSize() * 9.0F);
+            ImGuiMCP::TableSetupColumn("Max distance", ImGuiMCP::ImGuiTableColumnFlags_WidthFixed, ImGuiMCP::GetFontSize() * 9.0F);
             ImGuiMCP::TableSetupColumn("", ImGuiMCP::ImGuiTableColumnFlags_WidthFixed);
             ImGuiMCP::TableHeadersRow();
-            for (const auto& definition : definitions) {
+            for (const auto& definition : a_definitions) {
+                ImGuiMCP::PushID(static_cast<int>(definition.leashedFormID));
+                auto* leashed = RE::TESForm::LookupByID<RE::Actor>(definition.leashedFormID);
                 ImGuiMCP::TableNextRow();
                 ImGuiMCP::TableSetColumnIndex(0);
                 const auto leashedLabel = DescribeActor(definition.leashedFormID);
-                ImGuiMCP::TextUnformatted(leashedLabel.c_str());
+                ImGuiMCP::TextWrapped("%s", leashedLabel.c_str());
                 ImGuiMCP::TableSetColumnIndex(1);
                 const auto holderLabel = definition.holderFormID != 0 ? DescribeActor(definition.holderFormID) : std::string{"World position"};
-                ImGuiMCP::TextUnformatted(holderLabel.c_str());
+                ImGuiMCP::TextWrapped("%s", holderLabel.c_str());
                 ImGuiMCP::TableSetColumnIndex(2);
                 const auto meshOwnerFormID = definition.meshOwner == LeashMeshOwner::kHolder ? definition.holderFormID : definition.leashedFormID;
                 const auto meshOwnerLabel = DescribeActor(meshOwnerFormID);
-                ImGuiMCP::TextUnformatted(meshOwnerLabel.c_str());
+                ImGuiMCP::TextWrapped("%s", meshOwnerLabel.c_str());
                 ImGuiMCP::TableSetColumnIndex(3);
-                ImGuiMCP::PushID(static_cast<int>(definition.leashedFormID));
-                if (ImGuiMCP::Button("Free")) {
-                    auto* leashed = RE::TESForm::LookupByID<RE::Actor>(definition.leashedFormID);
+                RenderActiveLeashLength(leashed, definition.minLength, true);
+                ImGuiMCP::TableSetColumnIndex(4);
+                RenderActiveLeashLength(leashed, definition.maxLength, false);
+                ImGuiMCP::TableSetColumnIndex(5);
+                if (ImGuiMCP::Button("Disconnect")) {
                     auto* holder = RE::TESForm::LookupByID<RE::Actor>(definition.holderFormID);
                     const auto disconnected = LeashManager::GetSingleton().Disconnect(holder, leashed);
-                    status = disconnected ? std::format("Freed {}.", leashedLabel) : std::format("Could not free {}.", leashedLabel);
+                    activeStatus = disconnected ? std::format("Freed {}.", leashedLabel) : std::format("Could not free {}.", leashedLabel);
                 }
                 ImGuiMCP::PopID();
             }
             ImGuiMCP::EndTable();
         }
 
-        void RenderApplyLeash() {
-            ImGuiMCP::SeparatorText("Create test leash");
+        void RenderTestActors() {
             if (!actorsLoaded) {
                 RefreshActors();
             }
+            const auto previousHolder = selectedHolder;
+            const auto previousLeashed = selectedLeashed;
+            const auto previousOwner = debugSettings.holderOwnsLeash;
             if (ImGuiMCP::Button("Refresh nearby actors")) {
                 RefreshActors();
             }
             ImGuiMCP::SameLine();
-            ImGuiMCP::Text("%zu actor(s)", actorOptions.size());
-
-            RenderActorDropdown("Leashed", selectedLeashed);
-            const auto meshOwnerIndex = debugSettings.holderOwnsLeash ? 1U : 0U;
-            if (ImGuiMCP::BeginCombo("Physical leash owner", kMeshOwnerLabels[meshOwnerIndex])) {
-                for (std::size_t index = 0; index < kMeshOwnerLabels.size(); ++index) {
-                    const bool isSelected = index == meshOwnerIndex;
-                    if (ImGuiMCP::Selectable(kMeshOwnerLabels[index], isSelected) && !isSelected) {
-                        debugSettings.holderOwnsLeash = index == 1;
+            ImGuiMCP::TextDisabled("%zu available", actorOptions.size());
+            MenuLayout::Columns("TestActors", 22.0F, {
+                [] { RenderActorDropdown("Leashed actor", selectedLeashed); },
+                [] {
+                    if (!debugSettings.holderOwnsLeash && selectedAnchorType == DebugAnchorType::kWorldPosition) {
+                        ImGuiMCP::TextUnformatted("Leasher");
+                        ImGuiMCP::TextDisabled("None (world anchor)");
+                    } else {
+                        RenderActorDropdown("Leasher", selectedHolder);
+                    }
+                },
+                [] {
+                    int meshOwnerIndex = debugSettings.holderOwnsLeash ? 1 : 0;
+                    if (MenuLayout::Choice("Physical leash owner", meshOwnerIndex, kMeshOwnerLabels)) {
+                        debugSettings.holderOwnsLeash = meshOwnerIndex == 1;
                         if (debugSettings.holderOwnsLeash) {
                             selectedAnchorType = DebugAnchorType::kActorBone;
                         }
-                        applyStatus.clear();
-                    }
-                    if (isSelected) {
-                        ImGuiMCP::SetItemDefaultFocus();
                     }
                 }
-                ImGuiMCP::EndCombo();
+            });
+            if (previousHolder != selectedHolder || previousLeashed != selectedLeashed || previousOwner != debugSettings.holderOwnsLeash) {
+                applyStatus.clear();
+                armorStatus.clear();
+                skeletonStatus.clear();
+                skeletonDump.clear();
+                skeletonDumpActor.clear();
+            }
+        }
+
+        void RenderAnchorSettings() {
+            ImGuiMCP::SeparatorText("Anchor");
+            if (debugSettings.holderOwnsLeash) {
+                ImGuiMCP::TextWrapped("The leasher wears the rope; its endpoint attaches to a bone on the leashed actor.");
+            } else {
+                auto anchorIndex = static_cast<int>(selectedAnchorType);
+                if (MenuLayout::Choice("Attach to", anchorIndex, kDebugAnchorLabels)) {
+                    selectedAnchorType = static_cast<DebugAnchorType>(anchorIndex);
+                    applyStatus.clear();
+                    if (selectedAnchorType == DebugAnchorType::kWorldPosition && !CapturePlayerWorldAnchor()) {
+                        applyStatus = "Could not capture the player position and cell.";
+                    }
+                }
             }
 
-            if (debugSettings.holderOwnsLeash) {
-                RenderActorDropdown("Leasher", selectedHolder);
-                ImGuiMCP::InputText("Leashed attachment bone", selectedAttachmentBone, sizeof(selectedAttachmentBone));
-                ImGuiMCP::InputFloat3("Attachment offset (X, Y, Z)", &debugSettings.attachmentOffset.x, "%.2f");
-                const auto closedHandIndex = debugSettings.closedHand == 1 || debugSettings.closedHand == 2 ? static_cast<std::size_t>(debugSettings.closedHand) : 0U;
-                if (ImGuiMCP::BeginCombo("Closed leasher hand", kClosedHandLabels[closedHandIndex])) {
-                    for (std::size_t index = 0; index < kClosedHandLabels.size(); ++index) {
-                        const bool isSelected = index == closedHandIndex;
-                        if (ImGuiMCP::Selectable(kClosedHandLabels[index], isSelected)) {
-                            debugSettings.closedHand = static_cast<int>(index);
-                        }
-                        if (isSelected) {
-                            ImGuiMCP::SetItemDefaultFocus();
-                        }
-                    }
-                    ImGuiMCP::EndCombo();
+            if (!debugSettings.holderOwnsLeash && selectedAnchorType == DebugAnchorType::kWorldPosition) {
+                MenuLayout::Field("World position (X, Y, Z)", [](const char* a_id) { return ImGuiMCP::InputFloat3(a_id, &selectedWorldPosition.x, "%.2f"); });
+                ImGuiMCP::Text("Cell: %08X", selectedWorldCellFormID);
+                if (ImGuiMCP::Button("Use current player position")) {
+                    applyStatus = CapturePlayerWorldAnchor() ? "Captured the current player position and cell." : "Could not capture the player position and cell.";
+                }
+            } else if (debugSettings.holderOwnsLeash || selectedAnchorType == DebugAnchorType::kActorBone) {
+                MenuLayout::Field(debugSettings.holderOwnsLeash ? "Bone on leashed actor" : "Bone on leasher",
+                    [](const char* a_id) { return ImGuiMCP::InputText(a_id, selectedAttachmentBone, sizeof(selectedAttachmentBone)); });
+                MenuLayout::Field("Attachment offset (X, Y, Z)", [](const char* a_id) { return ImGuiMCP::InputFloat3(a_id, &debugSettings.attachmentOffset.x, "%.2f"); });
+                if (debugSettings.holderOwnsLeash) {
+                    MenuLayout::Choice("Closed leasher hand", debugSettings.closedHand, kClosedHandLabels);
                 }
             } else {
-                const auto selectedAnchorIndex = static_cast<std::size_t>(selectedAnchorType);
-                if (ImGuiMCP::BeginCombo("Leash anchor", kDebugAnchorLabels[selectedAnchorIndex])) {
-                    for (std::size_t index = 0; index < kDebugAnchorLabels.size(); ++index) {
-                        const auto anchorType = static_cast<DebugAnchorType>(index);
-                        const bool isSelected = anchorType == selectedAnchorType;
-                        if (ImGuiMCP::Selectable(kDebugAnchorLabels[index], isSelected) && !isSelected) {
-                            selectedAnchorType = anchorType;
-                            applyStatus.clear();
-                            if (selectedAnchorType == DebugAnchorType::kWorldPosition && !CapturePlayerWorldAnchor()) {
-                                applyStatus = "Could not capture the player position and cell.";
-                            }
-                        }
-                        if (isSelected) {
-                            ImGuiMCP::SetItemDefaultFocus();
-                        }
-                    }
-                    ImGuiMCP::EndCombo();
-                }
+                ImGuiMCP::TextWrapped("Uses the selected leasher's hand with the closed-fist grip.");
+            }
+        }
 
-                if (selectedAnchorType == DebugAnchorType::kWorldPosition) {
-                    ImGuiMCP::InputFloat3("Anchor position (X, Y, Z)", &selectedWorldPosition.x, "%.2f");
-                    ImGuiMCP::Text("Anchor cell FormID: %08X", selectedWorldCellFormID);
-                    if (ImGuiMCP::Button("Use current player position")) {
-                        applyStatus = CapturePlayerWorldAnchor() ? "Captured the current player position and cell." : "Could not capture the player position and cell.";
-                    }
-                } else {
-                    RenderActorDropdown("Leasher", selectedHolder);
-                    if (selectedAnchorType == DebugAnchorType::kActorBone) {
-                        ImGuiMCP::InputText("Leasher attachment bone", selectedAttachmentBone, sizeof(selectedAttachmentBone));
-                        ImGuiMCP::InputFloat3("Attachment offset (X, Y, Z)", &debugSettings.attachmentOffset.x, "%.2f");
-                    }
-                }
-            }
-            ImGuiMCP::InputText("Leash parent bone", debugSettings.parentBone, sizeof(debugSettings.parentBone));
-            ImGuiMCP::InputText("Leash bone match", debugSettings.leashBoneMatch, sizeof(debugSettings.leashBoneMatch));
-            ImGuiMCP::InputFloat("Minimum length", &debugSettings.minLength, 1.0F, 10.0F);
-            if (ImGuiMCP::IsItemHovered()) {
-                ImGuiMCP::SetTooltip("The player regains movement control at this distance, even while the holder moves. NPC followers settle here with a small arrival tolerance when the holder stops.\nWhile the holder moves, the preferred gap is configured under Locomotion. World-position leashes stop pulling at this distance.");
-            }
-            ImGuiMCP::InputFloat("Maximum length", &debugSettings.maxLength, 1.0F, 10.0F);
-            if (ImGuiMCP::IsItemHovered()) {
-                ImGuiMCP::SetTooltip("Player pulling and world-position pulling begin only beyond this distance. Actor-held NPC followers can start earlier to keep pace.\nForced recovery also uses this length.");
-            }
-            ImGuiMCP::Checkbox("Persistent", &debugSettings.persistent);
+        void RenderRopeSettings() {
+            ImGuiMCP::SeparatorText("Rope bones");
+            MenuLayout::Field("Parent bone", [](const char* a_id) { return ImGuiMCP::InputText(a_id, debugSettings.parentBone, sizeof(debugSettings.parentBone)); },
+                "Exact parent bone name on the physical leash owner. Use the Skeleton tab to inspect available bones.");
+            MenuLayout::Field("Leash bone match", [](const char* a_id) { return ImGuiMCP::InputText(a_id, debugSettings.leashBoneMatch, sizeof(debugSettings.leashBoneMatch)); },
+                "Match text for bones beneath the parent. At least two matching bones are required.");
+        }
 
-            if (ImGuiMCP::Button("Leash actor")) {
+        void RenderPullDistances() {
+            ImGuiMCP::SeparatorText("Pull distances");
+            MenuLayout::Columns("PullDistances", 22.0F, {
+                [] {
+                    MenuLayout::Field("Minimum length", [](const char* a_id) { return ImGuiMCP::InputFloat(a_id, &debugSettings.minLength, 1.0F, 10.0F, "%.1f"); },
+                        "The player regains movement control at this distance, even while the holder moves. NPC followers settle here with a small arrival tolerance when the holder stops.\n"
+                        "While the holder moves, the preferred gap is configured under Locomotion. World-position leashes stop pulling at this distance.");
+                },
+                [] {
+                    MenuLayout::Field("Maximum length", [](const char* a_id) { return ImGuiMCP::InputFloat(a_id, &debugSettings.maxLength, 1.0F, 10.0F, "%.1f"); },
+                        "Player pulling and world-position pulling begin only beyond this distance. Actor-held NPC followers can start earlier to keep pace.\nForced recovery also uses this length.");
+                }
+            });
+        }
+
+        void RenderApplyLeash() {
+            RenderTestActors();
+            MenuLayout::Columns("LeashSetup", 30.0F, {RenderAnchorSettings, RenderRopeSettings});
+            RenderPullDistances();
+            ImGuiMCP::Checkbox("Keep leash in saves", &debugSettings.persistent);
+            ImGuiMCP::Spacing();
+            ImGuiMCP::Separator();
+            ImGuiMCP::TextWrapped("Equip a rope on the physical leash owner in Equipment. Use Skeleton to check its bone names.");
+            if (ImGuiMCP::Button("Apply test leash")) {
                 applyStatus.clear();
                 auto* leashed = RE::TESForm::LookupByID<RE::Actor>(selectedLeashed);
                 auto* holder = RE::TESForm::LookupByID<RE::Actor>(selectedHolder);
@@ -756,14 +879,7 @@ namespace LeashFramework::UI::ModMenu {
                     }
                 }
             }
-            if (!applyStatus.empty()) {
-                ImGuiMCP::SameLine();
-                ImGuiMCP::TextWrapped("%s", applyStatus.c_str());
-            }
-
-            ImGuiMCP::Spacing();
-            ImGuiMCP::Spacing();
-            RenderArmorEntries();
+            MenuLayout::Feedback(applyStatus);
         }
 
         void RenderActorBodyCapsuleSettings(const char* a_label, Physics::ActorBodyCapsuleSettings& a_settings) {
@@ -944,11 +1060,12 @@ namespace LeashFramework::UI::ModMenu {
             Hooks::FrameHook::SetSettings(frameHook);
         }
 
-        void __stdcall RenderDebugPage() {
+        void RenderDiagnostics() {
+            ImGuiMCP::SeparatorText("Visualization and logging");
             if (ImGuiMCP::Checkbox("Draw actor collision", &actorCollisionDebugEnabled) && actorCollisionDebugEnabled) {
                 DebugOverlay::Register();
             }
-            if (ImGuiMCP::Checkbox("Enable Debug Logging", &debugSettings.enablePullDiagnostics)) {
+            if (ImGuiMCP::Checkbox("Enable debug logging", &debugSettings.enablePullDiagnostics)) {
                 LeashManager::GetSingleton().SetPullDiagnosticsEnabled(debugSettings.enablePullDiagnostics);
             }
             static const std::string logFilePath = [] {
@@ -961,17 +1078,51 @@ namespace LeashFramework::UI::ModMenu {
             if (ImGuiMCP::Button("Copy log file path")) {
                 ImGuiMCP::SetClipboardText(logFilePath.c_str());
             }
-            ImGuiMCP::Spacing();
-            RenderActiveLeashes();
-            ImGuiMCP::Spacing();
-            ImGuiMCP::Spacing();
-            RenderApplyLeash();
-            ImGuiMCP::Dummy({0.0F, ImGuiMCP::GetTextLineHeight() * 3.0F});
-            RenderSkeletonDumper();
-            if (!status.empty()) {
-                ImGuiMCP::Spacing();
-                ImGuiMCP::TextWrapped("%s", status.c_str());
+        }
+
+        void RenderEquipment() {
+            RenderTestActors();
+            const auto ownerID = debugSettings.holderOwnsLeash ? selectedHolder : selectedLeashed;
+            ImGuiMCP::TextWrapped("Equip on: %s", DescribeActor(ownerID).c_str());
+            MenuLayout::Columns("EquipmentTools", 30.0F, {RenderPluginArmorDropdown, RenderArmorEntries});
+            MenuLayout::Feedback(armorStatus);
+        }
+
+        void __stdcall RenderDebugPage() {
+            const auto em = ImGuiMCP::GetFontSize();
+            ImGuiMCP::PushStyleVar(ImGuiMCP::ImGuiStyleVar_ItemSpacing, {em * 0.6F, em * 0.4F});
+            ImGuiMCP::PushStyleVar(ImGuiMCP::ImGuiStyleVar_CellPadding, {em * 0.5F, em * 0.3F});
+            ImGuiMCP::PushStyleVar(ImGuiMCP::ImGuiStyleVar_FramePadding, {em * 0.4F, em * 0.2F});
+            if (ImGuiMCP::BeginTabBar("DebugTools", ImGuiMCP::ImGuiTabBarFlags_FittingPolicyScroll)) {
+                if (ImGuiMCP::BeginTabItem("Test leash")) {
+                    RenderApplyLeash();
+                    ImGuiMCP::EndTabItem();
+                }
+                const auto definitions = LeashManager::GetSingleton().GetDefinitions();
+                const auto activeLabel = std::format("Active leashes ({})###ActiveLeashesTab", definitions.size());
+                if (ImGuiMCP::BeginTabItem(activeLabel.c_str())) {
+                    RenderActiveLeashes(definitions);
+                    MenuLayout::Feedback(activeStatus);
+                    ImGuiMCP::EndTabItem();
+                }
+                if (ImGuiMCP::BeginTabItem("Equipment")) {
+                    RenderEquipment();
+                    ImGuiMCP::EndTabItem();
+                }
+                if (ImGuiMCP::BeginTabItem("Skeleton")) {
+                    RenderTestActors();
+                    const auto ownerID = debugSettings.holderOwnsLeash ? selectedHolder : selectedLeashed;
+                    ImGuiMCP::TextWrapped("Inspect: %s", DescribeActor(ownerID).c_str());
+                    RenderSkeletonDumper();
+                    ImGuiMCP::EndTabItem();
+                }
+                if (ImGuiMCP::BeginTabItem("Diagnostics")) {
+                    RenderDiagnostics();
+                    ImGuiMCP::EndTabItem();
+                }
+                ImGuiMCP::EndTabBar();
             }
+            ImGuiMCP::PopStyleVar(3);
         }
     }  // namespace
 
