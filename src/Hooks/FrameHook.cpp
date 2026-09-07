@@ -1,6 +1,7 @@
 #include "FrameHook.h"
 
 #include "../Leash/LeashManager.h"
+#include "../Movement/LeashMovementConstraint.h"
 #include "../PCH.h"
 
 namespace LeashFramework::Hooks {
@@ -27,6 +28,7 @@ namespace LeashFramework::Hooks {
         _originalLateFrameUpdate = trampoline.write_call<5>(address + lateFrameUpdateOffset, OnLateFrameUpdate);
         InstallAIControlledCameraFreedomHook();
         InstallGreetingSuppressionHook();
+        Movement::InstallLeashMovementConstraint();
         installed = true;
         SKSE::log::info("Installed frame hooks");
     }

@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "../Movement/DirectLocomotion.h"
+#include "../Movement/LeashMovementConstraint.h"
 #include "../PCH.h"
 #include "../Pathing/NavMeshPathfinder.h"
 
@@ -16,7 +17,6 @@ namespace LeashFramework {
         constexpr float kReplanInterval = 0.25F;
         constexpr float kGoalMoveThreshold = 64.0F;
         constexpr float kNormalizedRunSpeed = 2.0F;
-        constexpr float kDistanceResponseRate = 2.5F;
         constexpr float kExcessResponseRate = 2.0F;
         constexpr float kNormalizedAcceleration = 4.0F;
         constexpr float kNormalizedDeceleration = 8.0F;
@@ -66,6 +66,7 @@ namespace LeashFramework {
             kStateInvalidated,
             kDriveFailed,
             kSettled,
+            kNativeMovement,
             kWaitingForPath,
             kWaitingForSeparation,
             kTotal
@@ -126,12 +127,14 @@ namespace LeashFramework {
         a_settings.minimumForcedPullRatio = sanitize(a_settings.minimumForcedPullRatio, defaults.minimumForcedPullRatio, 0.0F, 1.0F);
         a_settings.maximumCatchUpSpeed = sanitize(a_settings.maximumCatchUpSpeed, defaults.maximumCatchUpSpeed, 0.25F, 10.0F);
         a_settings.movingFollowGap = sanitize(a_settings.movingFollowGap, defaults.movingFollowGap, 0.0F, 1.0F);
+        a_settings.distanceResponseRate = sanitize(a_settings.distanceResponseRate, defaults.distanceResponseRate, 0.1F, 10.0F);
         _settings = a_settings;
     }
 
     void PullController::Update(State& a_state, RE::Actor& a_actor, const RE::NiPoint3& a_collarAnchor, const RE::NiPoint3& a_anchor, float a_ropeLength, const RE::NiPoint3& a_goal, RE::TESObjectCELL* a_goalCell, bool a_hasHolder, float a_minLength, float a_maxLength, float a_deltaTime) {
         LF_PROFILE_SCOPE("Controller/Pull");
         if (!std::isfinite(a_deltaTime) || a_deltaTime <= 0.0F) {
+            Movement::ClearLeashMovementConstraint(a_state.nativeMovementBinding);
             return;
         }
         const auto deltaTime = std::min(a_deltaTime, kMaximumSampleTime);
@@ -166,15 +169,31 @@ namespace LeashFramework {
         goalDirection.z = 0.0F;
         (void)goalDirection.Unitize();
         const auto isPlayer = RE::PlayerCharacter::GetSingleton() == std::addressof(a_actor);
-        const auto arrivalDistance = a_minLength + (a_hasHolder && !isPlayer ? std::min(kArrivalTolerance, a_maxLength * 0.1F) : 0.0F);
+        const auto followsHolder = a_hasHolder && !isPlayer;
+        const auto arrivalDistance = a_minLength + (followsHolder ? std::min({kArrivalTolerance, a_maxLength * 0.1F, a_maxLength - a_minLength}) : 0.0F);
         const auto targetDistance = a_minLength + (a_maxLength - a_minLength) * _settings.movingFollowGap * motion.movingBlend;
         const auto predictedDistance = distance + std::max(motion.velocity.Dot(goalDirection), 0.0F) * kStartPredictionTime;
         const auto formID = a_actor.GetFormID();
+        const auto canUseNativeMovement = followsHolder && Movement::CanConstrainNativeMovement(a_actor);
+        const auto allowNativeMovement = [&] {
+            if (canUseNativeMovement && !motion.moving && CanPull(a_actor)) {
+                Movement::UpdateLeashMovementConstraint(a_state.nativeMovementBinding, a_actor, a_collarAnchor, a_anchor, a_goal, a_ropeLength, a_maxLength);
+                if (a_state.nativeMovementBinding) {
+                    LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kNativeMovement, "native movement within leash reach", a_actor, distance, a_minLength, a_maxLength);
+                }
+            } else {
+                Movement::ClearLeashMovementConstraint(a_state.nativeMovementBinding);
+            }
+        };
         if (!a_state.active) {
-            const auto shouldFollow = a_hasHolder && !isPlayer ? (motion.moving ? predictedDistance > targetDistance + kRestartTolerance : distance > arrivalDistance + kRestartTolerance) : distance > a_maxLength;
+            const auto physicalSeparation = distance > arrivalDistance + kRestartTolerance && a_collarAnchor.GetDistance(a_anchor) > a_ropeLength + kRestartTolerance;
+            const auto stationaryNeedsPull = canUseNativeMovement ? distance > a_maxLength || physicalSeparation : distance > arrivalDistance + kRestartTolerance;
+            const auto shouldFollow = followsHolder ? (motion.moving ? predictedDistance > targetDistance + kRestartTolerance : stationaryNeedsPull) : distance > a_maxLength;
             if (!shouldFollow || a_state.retryDelay > 0.0F) {
+                allowNativeMovement();
                 return;
             }
+            Movement::ClearLeashMovementConstraint(a_state.nativeMovementBinding);
 
             if (!CanPull(a_actor)) {
                 LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kCanPullBlocked, "blocked by CanPull", a_actor, distance, a_minLength, a_maxLength);
@@ -225,9 +244,11 @@ namespace LeashFramework {
             Release(a_state, std::addressof(a_actor));
             return;
         }
+        Movement::ClearLeashMovementConstraint(a_state.nativeMovementBinding);
         if ((isPlayer || !motion.moving) && distance <= arrivalDistance) {
             LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kSettled, "settled near minimum length", a_actor, distance, a_minLength, a_maxLength);
             Release(a_state, std::addressof(a_actor), true);
+            allowNativeMovement();
             return;
         }
 
@@ -279,6 +300,7 @@ namespace LeashFramework {
                 LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kWaitingForPath, "waiting for a usable path", a_actor, distance, a_minLength, a_maxLength);
                 Release(a_state, std::addressof(a_actor), true);
                 a_state.retryDelay = kRetryDelay;
+                allowNativeMovement();
             }
             return;
         }
@@ -301,7 +323,7 @@ namespace LeashFramework {
         const auto followSpeed = motion.velocity.Dot(endDirection);
         const auto controlDistance = std::max(distance, pathDistance);
         const auto excess = std::max({distance - a_maxLength, a_collarAnchor.GetDistance(a_anchor) - a_ropeLength, 0.0F});
-        const auto desiredSpeed = std::max(followSpeed + (controlDistance - targetDistance) * kDistanceResponseRate + excess * kExcessResponseRate, 0.0F);
+        const auto desiredSpeed = std::max(followSpeed + (controlDistance - targetDistance) * _settings.distanceResponseRate + excess * kExcessResponseRate, 0.0F);
         const auto runSpeed = a_actor.GetRunSpeed();
         const auto speedScale = kNormalizedRunSpeed / (std::isfinite(runSpeed) && runSpeed > 1.0F ? runSpeed : kFallbackRunSpeed);
         auto normalizedSpeed = std::clamp(desiredSpeed * speedScale, a_hasHolder ? 0.0F : kMinimumAnchorReturnSpeed, _settings.maximumCatchUpSpeed);
@@ -347,13 +369,15 @@ namespace LeashFramework {
         // Keep ownership while the moving gap contracts, rather than restarting halfway through settling.
         const auto settlingGap = !motion.moving && motion.movingBlend > 0.01F;
         a_state.idleTime = a_state.commandedSpeed <= kStoppedNormalizedSpeed && !settlingGap ? a_state.idleTime + deltaTime : 0.0F;
-        if (a_state.idleTime >= kIdleReleaseTime) {
+        if ((!followsHolder || !motion.moving) && a_state.idleTime >= kIdleReleaseTime) {
             LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kWaitingForSeparation, "waiting for room to follow", a_actor, distance, a_minLength, a_maxLength);
             Release(a_state, std::addressof(a_actor), true);
             a_state.retryDelay = kRetryDelay;
+            allowNativeMovement();
             return;
         }
-        if (!Movement::DriveDirectLocomotion(a_actor, a_state.path[a_state.waypointIndex], a_state.commandedSpeed)) {
+        const auto& driveTarget = followsHolder && a_state.commandedSpeed <= kStoppedNormalizedSpeed ? a_actor.GetPosition() : a_state.path[a_state.waypointIndex];
+        if (!Movement::DriveDirectLocomotion(a_actor, driveTarget, a_state.commandedSpeed)) {
             LogPullDecision(_diagnosticsEnabled, PullDiagnosticStage::kDriveFailed, "direct locomotion drive failed", a_actor, distance, a_minLength, a_maxLength);
             Release(a_state, std::addressof(a_actor));
         }
@@ -363,9 +387,11 @@ namespace LeashFramework {
         a_state.motion = {};
         a_state.commandedSpeed = 0.0F;
         a_state.idleTime = 0.0F;
+        Movement::ClearLeashMovementConstraint(a_state.nativeMovementBinding);
     }
 
     bool PullController::Release(State& a_state, RE::Actor* a_actor, bool a_keepMotion) {
+        Movement::ClearLeashMovementConstraint(a_state.nativeMovementBinding);
         const auto wasActive = a_state.active;
         if (wasActive && a_actor) {
             Movement::StopDirectLocomotion(*a_actor);

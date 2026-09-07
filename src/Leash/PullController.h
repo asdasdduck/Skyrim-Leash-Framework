@@ -12,6 +12,7 @@ namespace LeashFramework {
         float minimumForcedPullRatio{0.5F};
         float maximumCatchUpSpeed{3.0F};
         float movingFollowGap{0.4F};
+        float distanceResponseRate{2.5F};
     };
 
     class LeashInstance;
@@ -40,6 +41,7 @@ namespace LeashFramework {
 
         struct State {
             MotionState motion;
+            RE::MovementControllerNPC* nativeMovementBinding{};
             std::vector<RE::NiPoint3> path;
             std::size_t waypointIndex{};
             std::size_t stableDirectFrames{};

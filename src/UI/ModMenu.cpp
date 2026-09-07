@@ -966,6 +966,13 @@ namespace LeashFramework::UI::ModMenu {
                     "Default: 0.40 (40%%). For minimum 200 and maximum 300, this targets 240 units.\n"
                     "Player forward assistance can close this gap. Does not change player pull/release thresholds or world-position anchors.");
             }
+            ImGuiMCP::SliderFloat("Distance response rate", &a_settings.distanceResponseRate, 0.1F, 10.0F, "%.2f");
+            if (ImGuiMCP::IsItemHovered()) {
+                ImGuiMCP::SetTooltip(
+                    "How strongly remaining distance changes automatic pull speed for players and NPCs.\n"
+                    "Higher values close the gap faster, including the return toward minimum length when the holder stops.\n"
+                    "Arrival braking and the maximum catch-up speed still apply. Default: 2.50. Range: 0.10-10.00.");
+            }
         }
 
         void __stdcall RenderSettingsPage() {
