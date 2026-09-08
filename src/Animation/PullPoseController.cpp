@@ -98,8 +98,8 @@ namespace LeashFramework::Animation {
     }
 
     void PullPoseController::Prepare(State& a_state, RE::Actor& a_actor, const RE::NiAVObject* a_attachmentNode, const RE::NiPoint3& a_attachment, const RE::NiPoint3& a_anchor, float a_ropeLength, float a_deltaTime, bool a_allowed) {
-        if (!_settings.enabled || !a_allowed || !a_attachmentNode || a_actor.IsDead(false) || a_actor.IsInRagdollState() || !std::isfinite(a_deltaTime) || a_deltaTime <= 0.0F ||
-            !std::isfinite(a_ropeLength) || a_ropeLength <= kDirectionEpsilon || !Bind(a_state, a_actor)) {
+        if (!_settings.enabled || !a_allowed || !a_attachmentNode || a_actor.IsDead(false) || a_actor.IsInRagdollState() || a_actor.AsActorState()->GetKnockState() != RE::KNOCK_STATE_ENUM::kNormal ||
+            !std::isfinite(a_deltaTime) || a_deltaTime <= 0.0F || !std::isfinite(a_ropeLength) || a_ropeLength <= kDirectionEpsilon || !Bind(a_state, a_actor)) {
             Reset(a_state);
             return;
         }
@@ -233,7 +233,7 @@ namespace LeashFramework::Animation {
     }
 
     void PullPoseController::Apply(State& a_state, RE::Actor& a_actor) {
-        if (!_settings.enabled || !a_state.prepared || a_actor.IsDead(false) || a_actor.IsInRagdollState() || !Bind(a_state, a_actor)) {
+        if (!_settings.enabled || !a_state.prepared || a_actor.IsDead(false) || a_actor.IsInRagdollState() || a_actor.AsActorState()->GetKnockState() != RE::KNOCK_STATE_ENUM::kNormal || !Bind(a_state, a_actor)) {
             return;
         }
         if (a_state.frozen) {

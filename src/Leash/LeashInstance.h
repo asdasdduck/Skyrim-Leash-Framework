@@ -26,6 +26,7 @@ namespace LeashFramework {
         void SetMinLength(float a_length) noexcept;
         void SetMaxLength(float a_length) noexcept;
         bool ReleasePull();
+        bool ReleaseRecovery();
         bool ReleaseControl();
         void Tick(float a_deltaTime, const Physics::SimulationSettings& a_settings, const Physics::ActorBodyCollision* a_actorCollision, bool a_allowForcedRecovery,
             const LeashInstance* a_holderPoseSource);

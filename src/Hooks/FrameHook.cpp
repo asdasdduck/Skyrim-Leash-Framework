@@ -3,6 +3,7 @@
 #include "../Leash/LeashManager.h"
 #include "../Movement/LeashMovementConstraint.h"
 #include "../PCH.h"
+#include "../Recovery/RagdollHold.h"
 
 namespace LeashFramework::Hooks {
     namespace {
@@ -29,6 +30,7 @@ namespace LeashFramework::Hooks {
         InstallAIControlledCameraFreedomHook();
         InstallGreetingSuppressionHook();
         Movement::InstallLeashMovementConstraint();
+        Recovery::RagdollHold::InstallHooks();
         installed = true;
         SKSE::log::info("Installed frame hooks");
     }

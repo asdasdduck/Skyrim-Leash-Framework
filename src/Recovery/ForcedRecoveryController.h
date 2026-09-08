@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../PCH.h"
+#include "RagdollHold.h"
 
 namespace LeashFramework {
     class LeashInstance;
@@ -23,19 +24,18 @@ namespace LeashFramework::Recovery {
     private:
         friend class LeashFramework::LeashInstance;
 
-        enum class Mode { kRequestingRagdoll, kPulling, kRecovering, kCooldown };
+        enum class Mode { kInactive, kRequestingRagdoll, kPulling, kRecovering, kCooldown };
 
         struct State {
-            Mode mode{Mode::kRequestingRagdoll};
+            Mode mode{Mode::kInactive};
+            std::unique_ptr<RagdollHold> ragdollHold;
             float insideDistanceTime{};
             float actionRetryDelay{};
             float modeElapsed{};
-            float recoveryElapsed{};
-            bool active{};
-            bool ownsRagdoll{};
             bool requestIssued{};
             bool knockdownObserved{};
-            bool getUpEndQueued{};
+            bool pullEventSent{};
+            bool interruptingGetUp{};
         };
 
         [[nodiscard]] bool Update(State& a_state, RE::Actor& a_actor, const RE::NiPoint3& a_collarAnchor, const RE::NiPoint3& a_anchor, const RE::NiPoint3& a_source, float a_maxLength, float a_deltaTime);

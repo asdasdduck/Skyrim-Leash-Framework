@@ -84,7 +84,14 @@ namespace LeashFramework {
 
     Recovery::ForcedRecoverySettings LeashManager::GetRecoverySettings() const { return _recoveryController.GetSettings(); }
 
-    void LeashManager::SetRecoverySettings(Recovery::ForcedRecoverySettings a_settings) { _recoveryController.SetSettings(a_settings); }
+    void LeashManager::SetRecoverySettings(Recovery::ForcedRecoverySettings a_settings) {
+        _recoveryController.SetSettings(a_settings);
+        for (auto& leash : _leashes) {
+            if (!(leash->GetDefinition().leashedFormID == kPlayerFormID ? a_settings.enablePlayer : a_settings.enableNPCs)) {
+                leash->ReleaseRecovery();
+            }
+        }
+    }
 
     LeashTeleportSettings LeashManager::GetTeleportSettings() const { return _teleportController.GetSettings(); }
 
@@ -100,10 +107,7 @@ namespace LeashFramework {
 
     void LeashManager::HandlePreLoadGame() {
         for (auto& leash : _leashes) {
-            if (leash->GetDefinition().leashedFormID == kPlayerFormID) {
-                leash->ReleasePull();
-                return;
-            }
+            leash->ReleaseControl();
         }
     }
 
@@ -113,6 +117,7 @@ namespace LeashFramework {
             if (leash->ReleasePull()) {
                 ++releasedPulls;
             }
+            leash->ReleaseRecovery();
         }
         return releasedPulls;
     }

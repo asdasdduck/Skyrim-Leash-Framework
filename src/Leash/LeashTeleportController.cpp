@@ -35,7 +35,8 @@ namespace LeashFramework {
             const auto* actorState = a_actor.AsActorState();
             const auto* process = a_actor.GetActorRuntimeData().currentProcess;
             const auto* race = a_actor.GetRace();
-            return !ActorRestrictions::IsRagdollOrTeleportBlocked(a_actor) && !a_actor.IsInRagdollState() && race && !race->data.flags.any(RE::RACE_DATA::Flag::kImmobile) &&
+            return !ActorRestrictions::IsRagdollOrTeleportBlocked(a_actor) && !a_actor.IsInRagdollState() && actorState->GetKnockState() == RE::KNOCK_STATE_ENUM::kNormal &&
+                   race && !race->data.flags.any(RE::RACE_DATA::Flag::kImmobile) &&
                    !race->data.flags.any(RE::RACE_DATA::Flag::kNoKnockdowns) && actorState->GetLifeState() != RE::ACTOR_LIFE_STATE::kRestrained && process &&
                    (!process->high || static_cast<std::uint16_t>(process->high->animAction) != static_cast<std::uint16_t>(RE::CombatAnimation::ANIM::kActionActivate));
         }

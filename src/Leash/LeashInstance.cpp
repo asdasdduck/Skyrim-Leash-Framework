@@ -107,9 +107,11 @@ namespace LeashFramework {
         return _pullController.Release(_pullState, leashed.get());
     }
 
+    bool LeashInstance::ReleaseRecovery() { return _recoveryController.Release(_recoveryState); }
+
     bool LeashInstance::ReleaseControl() {
         const auto releasedPull = ReleasePull();
-        const auto releasedRecovery = _recoveryController.Release(_recoveryState);
+        const auto releasedRecovery = ReleaseRecovery();
         _pullPoseController.Reset(_pullPoseState);
         return releasedPull || releasedRecovery;
     }
@@ -144,6 +146,7 @@ namespace LeashFramework {
         }
         // The anchor bound successfully, but its runtime scene binding is new or different from the cached binding (Like eequipment changed, etc)
         if (anchorBindResult == LeashAnchor::BindResult::kChanged) {
+            ReleaseControl();
             ResetSimulation();
         }
         _anchor.ApplyPose();
@@ -177,7 +180,7 @@ namespace LeashFramework {
             _exceeded = false;
         }
         if (!a_allowForcedRecovery) {
-            _recoveryController.Release(_recoveryState);
+            ReleaseRecovery();
         }
         const auto forcedRecoveryActive = a_allowForcedRecovery && _recoveryController.Update(_recoveryState, *leashed, collarAnchor, leasherAnchor, pullGoal, _definition.maxLength, a_deltaTime);
         if (forcedRecoveryActive) {
@@ -250,23 +253,32 @@ namespace LeashFramework {
         auto* attachmentActor = _definition.meshOwner == LeashMeshOwner::kHolder ? leashed.get() : holder.get();
         auto* meshOwner = _definition.meshOwner == LeashMeshOwner::kHolder ? holder.get() : leashed.get();
         if (!leashed || !meshOwner || !Bind(*meshOwner)) {
+            ReleaseControl();
+            ResetSimulation();
             return;
         }
 
         const auto anchorBindResult = _anchor.Bind(attachmentActor, holder.get());
         if (anchorBindResult == LeashAnchor::BindResult::kFailed) {
+            ReleaseControl();
+            ResetSimulation();
             return;
         }
         _anchor.ApplyPose();
         const auto anchor = _anchor.GetSample(attachmentActor);
         if (!anchor) {
+            ReleaseControl();
+            ResetSimulation();
             return;
         }
         auto* pullGoalCell = holder ? holder->GetParentCell() : anchor->cell;
         if (!CanSimulateTogether(pullGoalCell, *leashed)) {
+            ReleaseControl();
+            ResetSimulation();
             return;
         }
         if (anchorBindResult == LeashAnchor::BindResult::kChanged) {
+            ReleaseControl();
             ResetSimulation();
             return;
         }
@@ -346,7 +358,7 @@ namespace LeashFramework {
     }
 
     void LeashInstance::ResetBinding() {
-        _pullController.ResetMotion(_pullState);
+        ReleaseControl();
         _bones.clear();
         _boundMeshRoot.reset();
         _neutralPositions.clear();

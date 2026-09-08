@@ -11,7 +11,6 @@ namespace LeashFramework::Recovery {
     namespace {
         constexpr float kInsideDistanceDelay = 0.25F;
         constexpr float kRagdollRetryInterval = 0.5F;
-        constexpr float kGetUpRetryInterval = 1.0F;
         constexpr float kRagdollRequestTimeout = 3.0F;
         constexpr float kPendingRagdollGrace = 1.0F;
         constexpr float kRagdollRetryCooldown = 5.0F;
@@ -27,12 +26,15 @@ namespace LeashFramework::Recovery {
             std::vector<RE::hkRefPtr<RE::hkpRigidBody>> bodies;
         };
 
-        [[nodiscard]] bool CanBeginRecovery(const RE::Actor& a_actor) {
+        [[nodiscard]] bool CanRequestRagdoll(const RE::Actor& a_actor, bool a_allowGetUp = false) {
             const auto* actorState = a_actor.AsActorState();
+            const auto knockState = actorState->GetKnockState();
             const auto* process = a_actor.GetActorRuntimeData().currentProcess;
             const auto* race = a_actor.GetRace();
-            return !ActorRestrictions::IsRagdollOrTeleportBlocked(a_actor) && a_actor.Is3DLoaded() && !a_actor.IsDead(true) && !a_actor.IsInRagdollState() && race &&
-                   !race->data.flags.any(RE::RACE_DATA::Flag::kImmobile) && !race->data.flags.any(RE::RACE_DATA::Flag::kNoKnockdowns) && actorState->GetLifeState() != RE::ACTOR_LIFE_STATE::kRestrained && process &&
+            return !ActorRestrictions::IsRagdollOrTeleportBlocked(a_actor) && a_actor.Is3DLoaded() && !a_actor.IsDead(true) && !a_actor.IsInRagdollState() &&
+                   (knockState == RE::KNOCK_STATE_ENUM::kNormal || (a_allowGetUp && knockState == RE::KNOCK_STATE_ENUM::kGetUp)) &&
+                   !a_actor.IsInKillMove() && race && !race->data.flags.any(RE::RACE_DATA::Flag::kImmobile) &&
+                   !race->data.flags.any(RE::RACE_DATA::Flag::kNoKnockdowns) && actorState->GetLifeState() == RE::ACTOR_LIFE_STATE::kAlive && process &&
                    process->middleHigh && (!process->high || static_cast<std::uint16_t>(process->high->animAction) != static_cast<std::uint16_t>(RE::CombatAnimation::ANIM::kActionActivate));
         }
 
@@ -82,16 +84,13 @@ namespace LeashFramework::Recovery {
             return snapshot;
         }
 
-        void PullRagdoll(RE::Actor& a_actor, const RE::NiPoint3& a_collarAnchor, const RE::NiPoint3& a_holderAnchor, float a_maxLength, float a_deltaTime) {
+        [[nodiscard]] bool PullRagdoll(RE::Actor& a_actor, const RE::NiPoint3& a_collarAnchor, const RE::NiPoint3& a_holderAnchor, float a_maxLength, float a_deltaTime) {
             auto direction = a_holderAnchor - a_collarAnchor;
             const auto distance = direction.Unitize();
-            if (distance <= 0.001F) {
-                return;
-            }
 
             auto snapshot = CaptureRagdoll(a_actor);
             if (!snapshot.world || snapshot.bodies.empty()) {
-                return;
+                return false;
             }
 
             const auto worldScale = RE::bhkWorld::GetWorldScale();
@@ -102,9 +101,10 @@ namespace LeashFramework::Recovery {
             RE::BSWriteLockGuard worldLock{snapshot.world->worldLock};
             auto* havokWorld = snapshot.world->GetWorld1();
             if (!havokWorld) {
-                return;
+                return false;
             }
 
+            bool hasDynamicBody{};
             for (const auto& bodyPointer : snapshot.bodies) {
                 auto* body = bodyPointer.get();
                 if (!body || body->world != havokWorld) {
@@ -119,6 +119,10 @@ namespace LeashFramework::Recovery {
                     continue;
                 }
 
+                hasDynamicBody = true;
+                if (distance <= a_maxLength || distance <= 0.001F) {
+                    continue;
+                }
                 const auto speedTowardHolder = body->motion.linearVelocity.Dot3(havokDirection);
                 const auto velocityChange = std::clamp(desiredSpeed - speedTowardHolder, 0.0F, maximumVelocityChange);
                 if (velocityChange <= 0.0F) {
@@ -126,6 +130,7 @@ namespace LeashFramework::Recovery {
                 }
                 body->ApplyLinearImpulse(RE::hkVector4{direction.x * velocityChange * mass, direction.y * velocityChange * mass, direction.z * velocityChange * mass, 0.0F});
             }
+            return hasDynamicBody;
         }
 
         [[nodiscard]] bool RequestRagdoll(RE::Actor& a_actor, const RE::NiPoint3& a_source) {
@@ -135,14 +140,6 @@ namespace LeashFramework::Recovery {
             }
             process->KnockExplosion(std::addressof(a_actor), a_source, 0.0F);
             return true;
-        }
-
-        [[nodiscard]] bool RequestGetUp(RE::Actor& a_actor) { return RE::SourceActionMap::DoAction(std::addressof(a_actor), RE::DEFAULT_OBJECT::kActionGetUp); }
-
-        void QueueGetUpEnd(RE::Actor& a_actor) {
-            using GetUpEndHandler = bool (*)(void*, RE::Actor*);
-            static REL::Relocation<GetUpEndHandler> getUpEndHandler{REL::VariantID(41799, 42880, 0x722DC0)};
-            static_cast<void>(getUpEndHandler(nullptr, std::addressof(a_actor)));
         }
     }  // namespace
 
@@ -158,100 +155,97 @@ namespace LeashFramework::Recovery {
         const auto enabled = IsEnabledFor(_settings, a_actor);
         const auto actorRestricted = ActorRestrictions::IsRagdollOrTeleportBlocked(a_actor);
         const auto triggerDistance = a_maxLength * _settings.distanceMultiplier;
-        if (!a_state.active) {
-            if (!enabled || distance <= triggerDistance || !CanBeginRecovery(a_actor)) {
+        const auto* process = a_actor.GetActorRuntimeData().currentProcess;
+        if (!std::isfinite(distance) || a_actor.IsDead(true) || a_actor.IsDisabled() || !a_actor.Is3DLoaded() || !process || !process->middleHigh) {
+            Release(a_state);
+            return false;
+        }
+
+        if (a_state.mode == Mode::kInactive) {
+            if (!RagdollHold::IsAvailable() || !enabled || distance <= triggerDistance || !CanRequestRagdoll(a_actor)) {
                 return false;
             }
-
-            a_state = {};
-            a_state.active = true;
+            // Give the leash tick a frame to release direct locomotion before requesting a knockdown
+            a_state.mode = Mode::kRequestingRagdoll;
             SKSE::log::info("Started forced recovery for {:08X} at distance {:.1f}", formID, distance);
             return true;
         }
 
         if (a_state.mode == Mode::kRecovering) {
-            if (UpdateRecovery(a_state, a_actor, a_deltaTime)) {
-                a_state = {};
-                return false;
+            if (a_state.pullEventSent && !a_state.interruptingGetUp && enabled && distance > a_maxLength &&
+                a_actor.AsActorState()->GetKnockState() == RE::KNOCK_STATE_ENUM::kGetUp && CanRequestRagdoll(a_actor, true)) {
+                // This continues our existing pull episode; a failed interruption must not restart itself every recovery tick...
+                a_state = State{.mode = Mode::kRequestingRagdoll, .pullEventSent = true, .interruptingGetUp = true};
+                SKSE::log::info("Interrupting forced-recovery get-up for {:08X} at distance {:.1f}", formID, distance);
+            } else {
+                if (UpdateRecovery(a_state, a_actor, a_deltaTime)) {
+                    BeginCooldown(a_state);
+                    return false;
+                }
+                return true;
             }
-            return true;
         }
 
         if (a_state.mode == Mode::kCooldown) {
-            if (!enabled || actorRestricted || distance <= triggerDistance) {
-                a_state = {};
-                return false;
-            }
-            a_state.actionRetryDelay = std::max(a_state.actionRetryDelay - a_deltaTime, 0.0F);
-            if (a_state.actionRetryDelay <= 0.0F && CanBeginRecovery(a_actor)) {
-                a_state.mode = Mode::kRequestingRagdoll;
-                a_state.modeElapsed = 0.0F;
-                return true;
+            a_state.modeElapsed += a_deltaTime;
+            if (!enabled || actorRestricted || a_state.modeElapsed >= kRagdollRetryCooldown) {
+                Release(a_state);
             }
             return false;
         }
 
-        if (!enabled || actorRestricted || a_actor.IsDead(true)) {
-            if (a_actor.IsDead(true)) {
-                a_state = {};
+        if (!enabled || actorRestricted || a_actor.IsInKillMove() || a_actor.AsActorState()->GetLifeState() != RE::ACTOR_LIFE_STATE::kAlive ||
+            a_actor.GetActorRuntimeData().boolBits.any(RE::Actor::BOOL_BITS::kParalyzed)) {
+            if (!a_state.requestIssued) {
+                Release(a_state);
                 return false;
             }
             BeginRecovery(a_state);
-            if (UpdateRecovery(a_state, a_actor, a_deltaTime)) {
-                a_state = {};
-                return false;
-            }
             return true;
         }
 
+        const auto knockState = a_actor.AsActorState()->GetKnockState();
         if (a_state.mode == Mode::kRequestingRagdoll) {
-            if (!a_state.ownsRagdoll && distance <= triggerDistance) {
-                if (a_state.requestIssued) {
+            const auto waitingForGetUpInterrupt = a_state.interruptingGetUp && knockState == RE::KNOCK_STATE_ENUM::kGetUp;
+            a_state.modeElapsed += a_deltaTime;
+            a_state.actionRetryDelay = std::max(a_state.actionRetryDelay - a_deltaTime, 0.0F);
+            if (a_state.requestIssued) {
+                if (knockState == RE::KNOCK_STATE_ENUM::kExplodeLeadIn || knockState == RE::KNOCK_STATE_ENUM::kExplode) {
+                    a_state.knockdownObserved = true;
+                } else if (a_state.knockdownObserved || (knockState != RE::KNOCK_STATE_ENUM::kNormal && !waitingForGetUpInterrupt) || a_actor.IsInRagdollState()) {
                     BeginRecovery(a_state);
-                    if (!UpdateRecovery(a_state, a_actor, a_deltaTime)) {
-                        return true;
-                    }
+                    return true;
                 }
-                a_state = {};
+            } else if (!CanRequestRagdoll(a_actor, a_state.interruptingGetUp)) {
+                BeginCooldown(a_state);
                 return false;
             }
 
-            const auto requestingKnockState = a_actor.AsActorState()->GetKnockState();
-            const auto requestingRagdoll = a_actor.IsInRagdollState();
-            if (a_state.requestIssued && (requestingRagdoll || requestingKnockState != RE::KNOCK_STATE_ENUM::kNormal)) {
-                a_state.ownsRagdoll = true;
-                a_state.knockdownObserved = true;
+            const auto requestDistance = a_state.interruptingGetUp ? a_maxLength : triggerDistance;
+            if (!a_state.knockdownObserved && distance <= requestDistance) {
+                if (a_state.requestIssued) {
+                    BeginRecovery(a_state);
+                    return true;
+                }
+                Release(a_state);
+                return false;
             }
-            if (requestingRagdoll && requestingKnockState != RE::KNOCK_STATE_ENUM::kGetUp) {
-                if (!a_state.ownsRagdoll) {
-                    BeginCooldown(a_state);
-                    return false;
-                }
-                a_state.mode = Mode::kPulling;
-                a_state.modeElapsed = 0.0F;
-                if (auto* eventSource = SKSE::GetModCallbackEventSource()) {
-                    const SKSE::ModCallbackEvent event{.eventName = RE::BSFixedString{"LeashFramework_OnActorRagdollPulled"}, .strArg = {}, .numArg = distance, .sender = std::addressof(a_actor)};
-                    eventSource->SendEvent(std::addressof(event));
-                    SKSE::log::info("Sent LeashFramework_OnActorRagdollPulled for {:08X} at distance {:.1f}", formID, distance);
-                }
-            } else {
-                a_state.modeElapsed += a_deltaTime;
-                if (a_state.modeElapsed >= kRagdollRequestTimeout) {
-                    if (a_state.ownsRagdoll) {
-                        BeginRecovery(a_state);
-                        if (UpdateRecovery(a_state, a_actor, a_deltaTime)) {
-                            a_state = {};
-                            return false;
-                        }
-                        return true;
-                    }
-                    SKSE::log::warn("Forced recovery could not ragdoll {:08X}; restoring locomotion", formID);
-                    BeginCooldown(a_state);
-                    return false;
-                }
+            if (a_state.modeElapsed >= kRagdollRequestTimeout) {
+                SKSE::log::warn("Forced recovery could not obtain a dynamic ragdoll for {:08X} (get-up interruption={})", formID, a_state.interruptingGetUp);
+                BeginRecovery(a_state);
+                return true;
+            }
 
-                a_state.actionRetryDelay = std::max(a_state.actionRetryDelay - a_deltaTime, 0.0F);
-                if (a_state.actionRetryDelay <= 0.0F && (!a_state.requestIssued || requestingKnockState == RE::KNOCK_STATE_ENUM::kNormal)) {
+            if (knockState != RE::KNOCK_STATE_ENUM::kExplode) {
+                if ((knockState == RE::KNOCK_STATE_ENUM::kNormal || waitingForGetUpInterrupt) && a_state.actionRetryDelay <= 0.0F && CanRequestRagdoll(a_actor, a_state.interruptingGetUp)) {
+                    if (!a_state.ragdollHold) {
+                        a_state.ragdollHold = RagdollHold::Acquire(a_actor);
+                    }
+                    if (!a_state.ragdollHold) {
+                        BeginCooldown(a_state);
+                        return false;
+                    }
+                    // Publish the hold before the request: the engine may enter and update ragdoll before our next tick.
                     if (RequestRagdoll(a_actor, a_source)) {
                         a_state.requestIssued = true;
                     }
@@ -259,120 +253,80 @@ namespace LeashFramework::Recovery {
                 }
                 return true;
             }
+        } else if (knockState != RE::KNOCK_STATE_ENUM::kExplode) {
+            BeginRecovery(a_state);
+            return true;
+        }
+
+        if (!PullRagdoll(a_actor, a_collarAnchor, a_anchor, a_maxLength, a_deltaTime)) {
+            if (a_state.mode == Mode::kPulling) {
+                SKSE::log::warn("Forced recovery lost its dynamic ragdoll for {:08X}", formID);
+                BeginRecovery(a_state);
+            }
+            return true;
+        }
+
+        if (a_state.mode == Mode::kRequestingRagdoll) {
+            a_state.mode = Mode::kPulling;
+            a_state.modeElapsed = 0.0F;
+            a_state.interruptingGetUp = false;
+            if (!a_state.pullEventSent) {
+                a_state.pullEventSent = true;
+                if (auto* eventSource = SKSE::GetModCallbackEventSource()) {
+                    const SKSE::ModCallbackEvent event{.eventName = RE::BSFixedString{"LeashFramework_OnActorRagdollPulled"}, .strArg = {}, .numArg = distance, .sender = std::addressof(a_actor)};
+                    eventSource->SendEvent(std::addressof(event));
+                    SKSE::log::info("Sent LeashFramework_OnActorRagdollPulled for {:08X} at distance {:.1f}", formID, distance);
+                }
+            }
         }
 
         if (distance <= a_maxLength) {
             a_state.insideDistanceTime += a_deltaTime;
             if (a_state.insideDistanceTime >= kInsideDistanceDelay) {
                 BeginRecovery(a_state);
-                if (UpdateRecovery(a_state, a_actor, a_deltaTime)) {
-                    a_state = {};
-                    return false;
-                }
             }
-            return true;
+        } else {
+            a_state.insideDistanceTime = 0.0F;
         }
-        a_state.insideDistanceTime = 0.0F;
-
-        const auto knockState = a_actor.AsActorState()->GetKnockState();
-        const auto isRagdolled = a_actor.IsInRagdollState();
-        if (isRagdolled) {
-            a_state.knockdownObserved = true;
-        }
-        a_state.actionRetryDelay = std::max(a_state.actionRetryDelay - a_deltaTime, 0.0F);
-        if (!isRagdolled || knockState == RE::KNOCK_STATE_ENUM::kGetUp) {
-            a_state.mode = Mode::kRequestingRagdoll;
-            a_state.modeElapsed = 0.0F;
-            a_state.actionRetryDelay = 0.0F;
-            a_state.requestIssued = false;
-            return true;
-        }
-
-        PullRagdoll(a_actor, a_collarAnchor, a_anchor, a_maxLength, a_deltaTime);
         return true;
     }
 
     bool ForcedRecoveryController::Release(State& a_state) {
-        if (!a_state.active) {
-            return false;
-        }
-        // Just stop pulling here. Skyrim owns the ragdoll and will get the actor up.
+        const auto wasActive = a_state.mode != Mode::kInactive;
         a_state = {};
-        return true;
+        return wasActive;
     }
 
     void ForcedRecoveryController::BeginRecovery(State& a_state) {
-        if (a_state.mode == Mode::kRecovering) {
-            return;
+        a_state.ragdollHold.reset();
+        if (a_state.mode != Mode::kRecovering) {
+            a_state.mode = Mode::kRecovering;
+            a_state.modeElapsed = 0.0F;
         }
-        a_state.mode = Mode::kRecovering;
-        a_state.actionRetryDelay = 0.0F;
-        a_state.modeElapsed = 0.0F;
-        a_state.recoveryElapsed = 0.0F;
-        a_state.getUpEndQueued = false;
     }
 
     void ForcedRecoveryController::BeginCooldown(State& a_state) {
+        a_state = {};
         a_state.mode = Mode::kCooldown;
-        a_state.actionRetryDelay = kRagdollRetryCooldown;
-        a_state.modeElapsed = 0.0F;
-        a_state.recoveryElapsed = 0.0F;
-        a_state.ownsRagdoll = false;
-        a_state.requestIssued = false;
-        a_state.knockdownObserved = false;
-        a_state.getUpEndQueued = false;
     }
 
     bool ForcedRecoveryController::UpdateRecovery(State& a_state, RE::Actor& a_actor, float a_deltaTime) {
-        const auto* process = a_actor.GetActorRuntimeData().currentProcess;
-        if (!a_actor.Is3DLoaded() || !process || !process->middleHigh) {
-            return false;
-        }
-
+        a_state.modeElapsed += a_deltaTime;
         const auto isRagdolled = a_actor.IsInRagdollState();
         const auto knockState = a_actor.AsActorState()->GetKnockState();
-        if (!a_state.ownsRagdoll) {
-            if (!a_state.requestIssued) {
-                return true;
-            }
-            if (isRagdolled || knockState != RE::KNOCK_STATE_ENUM::kNormal) {
-                a_state.ownsRagdoll = true;
-                a_state.knockdownObserved = true;
-            } else {
-                a_state.modeElapsed += a_deltaTime;
-                return a_state.modeElapsed >= kPendingRagdollGrace;
-            }
-        }
-
-        a_state.recoveryElapsed += a_deltaTime;
-        if (a_state.recoveryElapsed >= kRecoveryTimeout) {
-            SKSE::log::error("Forced recovery timed out for {:08X}", a_actor.GetFormID());
-            if (a_actor.IsInRagdollState() || a_actor.AsActorState()->GetKnockState() != RE::KNOCK_STATE_ENUM::kNormal) {
-                a_actor.PotentiallyFixRagdollState();
-            }
-            return true;
-        }
-
         if (isRagdolled || knockState != RE::KNOCK_STATE_ENUM::kNormal) {
             a_state.knockdownObserved = true;
-        }
-        if (knockState == RE::KNOCK_STATE_ENUM::kNormal && !isRagdolled) {
-            if (!a_state.knockdownObserved) {
+        } else {
+            if (a_state.requestIssued && !a_state.knockdownObserved && a_state.modeElapsed < kPendingRagdollGrace) {
                 return false;
             }
             SKSE::log::info("Completed forced recovery for {:08X}", a_actor.GetFormID());
             return true;
         }
-        a_state.actionRetryDelay = std::max(a_state.actionRetryDelay - a_deltaTime, 0.0F);
-        if (knockState == RE::KNOCK_STATE_ENUM::kGetUp) {
-            if (!a_state.getUpEndQueued && a_state.actionRetryDelay <= 0.0F) {
-                QueueGetUpEnd(a_actor);
-                a_state.getUpEndQueued = true;
-                a_state.actionRetryDelay = kGetUpRetryInterval;
-            }
-        } else if (isRagdolled && a_state.actionRetryDelay <= 0.0F) {
-            static_cast<void>(RequestGetUp(a_actor));
-            a_state.actionRetryDelay = kGetUpRetryInterval;
+
+        if (a_state.modeElapsed >= kRecoveryTimeout) {
+            SKSE::log::warn("Forced recovery timed out for {:08X}; leaving recovery to Skyrim", a_actor.GetFormID());
+            return true;
         }
         return false;
     }

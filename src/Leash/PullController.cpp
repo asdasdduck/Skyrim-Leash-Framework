@@ -44,7 +44,8 @@ namespace LeashFramework {
 
         [[nodiscard]] bool CanPull(const RE::Actor& a_actor) {
             const auto* actorState = a_actor.AsActorState();
-            return !a_actor.IsDead(false) && !a_actor.IsInRagdollState() && !actorState->IsUnconscious() && actorState->GetLifeState() != RE::ACTOR_LIFE_STATE::kRestrained &&
+            return !a_actor.IsDead(false) && !a_actor.IsInRagdollState() && actorState->GetKnockState() == RE::KNOCK_STATE_ENUM::kNormal && !actorState->IsUnconscious() &&
+                   actorState->GetLifeState() != RE::ACTOR_LIFE_STATE::kRestrained &&
                    !a_actor.GetActorRuntimeData().boolFlags.any(RE::Actor::BOOL_FLAGS::kMovementBlocked);
         }
 
