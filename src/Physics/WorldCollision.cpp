@@ -219,7 +219,7 @@ namespace LeashFramework::Physics {
             RE::hkpLinearCastInput input{};
             input.to = RE::hkVector4(target * worldScale);
             input.maxExtraPenetration = castTolerance;
-            input.startPointTolerance = castTolerance;
+            input.startPointTolerance = kContactSkin * worldScale + castTolerance;
 
             SphereCastCollector castCollector{&queryCollidable, direction, false};
             SphereCastCollector overlapCollector{&queryCollidable, direction, true};
@@ -237,6 +237,13 @@ namespace LeashFramework::Physics {
                 target += correction;
                 AddContact(result, position, normal, useActor ? actorOverlap->shape : ActorBodyCollision::ShapeKey{}, useActor || overlapCollector.IsMovingSurface());
                 continue;
+            }
+
+            if (overlapCollector.HasHit() && overlapCollector.GetDistance() <= input.startPointTolerance) {
+                const auto& normal = overlapCollector.GetNormal();
+                // Query across the skin so a resting contact survives even when this step's gravity is smaller than the gap.
+                const auto planePoint = position + normal * (kContactSkin - overlapCollector.GetDistance() * worldScaleInverse);
+                AddContact(result, planePoint, normal, {}, overlapCollector.IsMovingSurface());
             }
 
             if (distance <= 0.0F) {
@@ -259,14 +266,12 @@ namespace LeashFramework::Physics {
                 remaining -= normal * inwardDistance;
             }
 
-            const auto skinPosition = hitPoint + normal * kContactSkin;
-            // A near zero cast can start inside the tolerance so don't add the skin again
-            if ((skinPosition - position).Dot(normal) <= 0.0F) {
-                position = skinPosition;
-            }
+            // Limit only the normal skin offset at near-zero hits; keep all tangential travel to the hit.
+            const auto skinOffset = std::clamp((position - hitPoint).Dot(normal), 0.0F, kContactSkin);
+            position = hitPoint + normal * skinOffset;
             AddContact(result, position, normal, useActor ? actorHit->shape : ActorBodyCollision::ShapeKey{}, useActor || castCollector.IsMovingSurface());
             if (remaining.SqrLength() < kMinimumMovementSquared) {
-                return finish(position);
+                return finish(position + remaining);
             }
             target = position + remaining;
         }
