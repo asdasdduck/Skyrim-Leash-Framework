@@ -42,6 +42,33 @@ namespace LeashFramework::Recovery {
 
         [[nodiscard]] RagdollSnapshot CaptureRagdoll(RE::Actor& a_actor) {
             RagdollSnapshot snapshot;
+            if (a_actor.IsDead(true)) {
+                auto* cell = a_actor.GetParentCell();
+                auto* world = cell ? cell->GetbhkWorld() : nullptr;
+                auto* root = a_actor.Get3D();
+                if (!world || !root) {
+                    return snapshot;
+                }
+                snapshot.world = RE::NiPointer<RE::bhkWorld>{world};
+                // Match Skyrim's ApplyHavokImpulse traversal; corpses need no animation ragdoll driver.
+                const auto captureNode = [&](auto&& a_self, RE::NiAVObject& a_object) -> void {
+                    auto* collision = netimmerse_cast<RE::bhkCollisionObject*>(a_object.collisionObject.get());
+                    auto* wrapper = collision ? collision->GetRigidBody() : nullptr;
+                    auto* body = wrapper ? wrapper->GetRigidBody() : nullptr;
+                    if (body && std::ranges::none_of(snapshot.bodies, [body](const auto& a_body) { return a_body.get() == body; })) {
+                        snapshot.bodies.emplace_back(body);
+                    }
+                    if (auto* node = a_object.AsNode()) {
+                        for (const auto& child : node->GetChildren()) {
+                            if (child) {
+                                a_self(a_self, *child);
+                            }
+                        }
+                    }
+                };
+                captureNode(captureNode, *root);
+                return snapshot;
+            }
             RE::BSAnimationGraphManagerPtr manager;
             if (!a_actor.GetAnimationGraphManager(manager) || !manager) {
                 return snapshot;
@@ -141,6 +168,17 @@ namespace LeashFramework::Recovery {
             process->KnockExplosion(std::addressof(a_actor), a_source, 0.0F);
             return true;
         }
+
+        void SendPullEvent(RE::Actor& a_actor, float a_distance, bool& a_sent) {
+            if (!a_sent) {
+                a_sent = true;
+                if (auto* eventSource = SKSE::GetModCallbackEventSource()) {
+                    const SKSE::ModCallbackEvent event{.eventName = RE::BSFixedString{"LeashFramework_OnActorRagdollPulled"}, .strArg = {}, .numArg = a_distance, .sender = std::addressof(a_actor)};
+                    eventSource->SendEvent(std::addressof(event));
+                    SKSE::log::info("Sent LeashFramework_OnActorRagdollPulled for {:08X} at distance {:.1f}", a_actor.GetFormID(), a_distance);
+                }
+            }
+        }
     }  // namespace
 
     void ForcedRecoveryController::SetSettings(ForcedRecoverySettings a_settings) noexcept {
@@ -156,7 +194,47 @@ namespace LeashFramework::Recovery {
         const auto actorRestricted = ActorRestrictions::IsRagdollOrTeleportBlocked(a_actor);
         const auto triggerDistance = a_maxLength * _settings.distanceMultiplier;
         const auto* process = a_actor.GetActorRuntimeData().currentProcess;
-        if (!std::isfinite(distance) || a_actor.IsDead(true) || a_actor.IsDisabled() || !a_actor.Is3DLoaded() || !process || !process->middleHigh) {
+        if (!std::isfinite(distance) || a_actor.IsDisabled() || !a_actor.Is3DLoaded()) {
+            Release(a_state);
+            return false;
+        }
+
+        if (a_actor.IsDead(true)) {
+            if (a_actor.IsPlayerRef() || !enabled || actorRestricted || a_actor.IsInKillMove()) {
+                Release(a_state);
+                return false;
+            }
+            if (a_state.mode != Mode::kPullingCorpse) {
+                const auto continuingPull = a_state.mode == Mode::kPulling;
+                const auto eventSent = continuingPull && a_state.pullEventSent;
+                Release(a_state);
+                if (distance <= (continuingPull ? a_maxLength : triggerDistance)) {
+                    return false;
+                }
+                a_state.mode = Mode::kPullingCorpse;
+                a_state.pullEventSent = eventSent;
+                return true;
+            }
+            if (!PullRagdoll(a_actor, a_collarAnchor, a_anchor, a_maxLength, a_deltaTime)) {
+                Release(a_state);
+                return false;
+            }
+            SendPullEvent(a_actor, distance, a_state.pullEventSent);
+            if (distance <= a_maxLength) {
+                a_state.insideDistanceTime += a_deltaTime;
+                if (a_state.insideDistanceTime >= kInsideDistanceDelay) {
+                    Release(a_state);
+                    return false;
+                }
+            } else {
+                a_state.insideDistanceTime = 0.0F;
+            }
+            return true;
+        }
+        if (a_state.mode == Mode::kPullingCorpse) {
+            Release(a_state);
+        }
+        if (!process || !process->middleHigh) {
             Release(a_state);
             return false;
         }
@@ -270,14 +348,7 @@ namespace LeashFramework::Recovery {
             a_state.mode = Mode::kPulling;
             a_state.modeElapsed = 0.0F;
             a_state.interruptingGetUp = false;
-            if (!a_state.pullEventSent) {
-                a_state.pullEventSent = true;
-                if (auto* eventSource = SKSE::GetModCallbackEventSource()) {
-                    const SKSE::ModCallbackEvent event{.eventName = RE::BSFixedString{"LeashFramework_OnActorRagdollPulled"}, .strArg = {}, .numArg = distance, .sender = std::addressof(a_actor)};
-                    eventSource->SendEvent(std::addressof(event));
-                    SKSE::log::info("Sent LeashFramework_OnActorRagdollPulled for {:08X} at distance {:.1f}", formID, distance);
-                }
-            }
+            SendPullEvent(a_actor, distance, a_state.pullEventSent);
         }
 
         if (distance <= a_maxLength) {

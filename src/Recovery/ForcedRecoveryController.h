@@ -24,7 +24,7 @@ namespace LeashFramework::Recovery {
     private:
         friend class LeashFramework::LeashInstance;
 
-        enum class Mode { kInactive, kRequestingRagdoll, kPulling, kRecovering, kCooldown };
+        enum class Mode { kInactive, kRequestingRagdoll, kPulling, kPullingCorpse, kRecovering, kCooldown };
 
         struct State {
             Mode mode{Mode::kInactive};
