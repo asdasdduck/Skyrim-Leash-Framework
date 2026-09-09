@@ -161,3 +161,30 @@ newLength must be positive and cannot be less than the current minimum length.
 Returns false when leashed has no active leash or newLength is invalid.
 /;
 Bool Function SetMaxLeashLength(Actor leashed, Float newLength) Global Native
+
+;/
+Overrides forced ragdoll recovery for leashed's active leash, for either a player or NPC.
+
+mode: -1 uses the current player/NPC config setting, 0 disables recovery, and 1 enables it.
+Enabling still respects actor restrictions and recovery eligibility. Disabling releases the framework's
+ragdoll hold and recovery state; Skyrim handles any remaining get-up. Ordinary engine ragdolls are unaffected.
+
+The override lasts until this leash is replaced or disconnected and is saved only with persistent leashes.
+Set mode back to -1 to remove the override. Returns false for an absent leash or a mode outside -1 through 1.
+/;
+Bool Function SetRagdollOverride(Actor leashed, Int mode = -1) Global Native
+
+;/
+Overrides teleport recovery for leashed's active leash, for either a player or NPC.
+
+mode: -1 uses current config/default behavior, 0 disables all leash teleport handling, and 1 enables it.
+This covers both following a player holder after positioning and separation recovery for NPC holders.
+For NPC holders, mode 1 uses the configured player/NPC extra distance when positive, or the default
+2,048 units when the configured distance is 0 or less. Grace time still comes from the config.
+Enabling still respects actor restrictions, holderless anchors, and the minLength > 99,999 disable rule.
+Changing the override clears pending teleport recovery.
+
+The override lasts until this leash is replaced or disconnected and is saved only with persistent leashes.
+Set mode back to -1 to remove the override. Returns false for an absent leash or a mode outside -1 through 1.
+/;
+Bool Function SetTeleportOverride(Actor leashed, Int mode = -1) Global Native

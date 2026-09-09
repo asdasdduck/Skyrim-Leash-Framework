@@ -42,7 +42,7 @@ namespace LeashFramework::Serialization {
 
         constexpr auto kSerializationID = MakeRecordType('L', 'F', 'W', 'K');
         constexpr auto kDataRecord = MakeRecordType('L', 'S', 'H', 'S');
-        constexpr std::uint32_t kRecordVersion = 4;
+        constexpr std::uint32_t kRecordVersion = 5;
         constexpr std::uint32_t kMaximumRecordSize = 16U * 1024U * 1024U;
 
         void DiscardRecord(SKSE::SerializationInterface* a_interface, std::uint32_t a_length) {

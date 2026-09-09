@@ -38,6 +38,8 @@ namespace LeashFramework {
         [[nodiscard]] float GetMaxLength(RE::Actor* a_leashed) const;
         [[nodiscard]] bool SetMinLength(RE::Actor* a_leashed, float a_length);
         [[nodiscard]] bool SetMaxLength(RE::Actor* a_leashed, float a_length);
+        [[nodiscard]] bool SetRagdollOverride(RE::Actor* a_leashed, std::int32_t a_mode);
+        [[nodiscard]] bool SetTeleportOverride(RE::Actor* a_leashed, std::int32_t a_mode);
         [[nodiscard]] Physics::SimulationSettings GetSimulationSettings() const;
         void SetSimulationSettings(Physics::SimulationSettings a_settings);
         [[nodiscard]] LocomotionSettings GetLocomotionSettings() const;
@@ -66,6 +68,7 @@ namespace LeashFramework {
         RE::BSEventNotifyControl ProcessEvent(const RE::PositionPlayerEvent* a_event, RE::BSTEventSource<RE::PositionPlayerEvent>* a_eventSource) override;
         RE::BSEventNotifyControl ProcessEvent(const RE::TESObjectLoadedEvent* a_event, RE::BSTEventSource<RE::TESObjectLoadedEvent>* a_eventSource) override;
         [[nodiscard]] bool ApplyDefinition(LeashDefinition a_definition);
+        [[nodiscard]] bool SetOverride(RE::Actor* a_leashed, std::int32_t a_mode, void (LeashInstance::*a_setter)(std::optional<bool>));
         [[nodiscard]] static bool IsValid(const LeashDefinition& a_definition);
         void SortByPoseDependencies();
         void RefreshActorFactions(const std::vector<RE::FormID>& a_actorFormIDs);

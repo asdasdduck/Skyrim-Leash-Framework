@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <variant>
 
@@ -29,6 +30,11 @@ namespace LeashFramework {
 
     using LeashAnchorDefinition = std::variant<HandAnchor, ActorBoneAnchor, WorldPositionAnchor>;
 
+    struct LeashOverrides {
+        std::optional<bool> ragdoll;
+        std::optional<bool> teleport;
+    };
+
     struct LeashDefinition {
         std::uint32_t holderFormID{};
         std::uint32_t leashedFormID{};
@@ -40,5 +46,6 @@ namespace LeashFramework {
         float minLength{};
         float maxLength{};
         bool persistent{};
+        LeashOverrides overrides{};
     };
 }  // namespace LeashFramework

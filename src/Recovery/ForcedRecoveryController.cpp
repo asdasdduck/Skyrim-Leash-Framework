@@ -38,8 +38,6 @@ namespace LeashFramework::Recovery {
                    process->middleHigh && (!process->high || static_cast<std::uint16_t>(process->high->animAction) != static_cast<std::uint16_t>(RE::CombatAnimation::ANIM::kActionActivate));
         }
 
-        [[nodiscard]] bool IsEnabledFor(const ForcedRecoverySettings& a_settings, const RE::Actor& a_actor) { return a_actor.IsPlayerRef() ? a_settings.enablePlayer : a_settings.enableNPCs; }
-
         [[nodiscard]] RagdollSnapshot CaptureRagdoll(RE::Actor& a_actor) {
             RagdollSnapshot snapshot;
             if (a_actor.IsDead(true)) {
@@ -186,11 +184,11 @@ namespace LeashFramework::Recovery {
         _settings = a_settings;
     }
 
-    bool ForcedRecoveryController::Update(State& a_state, RE::Actor& a_actor, const RE::NiPoint3& a_collarAnchor, const RE::NiPoint3& a_anchor, const RE::NiPoint3& a_source, float a_maxLength, float a_deltaTime) {
+    bool ForcedRecoveryController::Update(State& a_state, RE::Actor& a_actor, const RE::NiPoint3& a_collarAnchor, const RE::NiPoint3& a_anchor, const RE::NiPoint3& a_source, float a_maxLength, float a_deltaTime,
+        bool a_enabled) {
         LF_PROFILE_SCOPE("Controller/ForcedRecovery");
         const auto distance = a_collarAnchor.GetDistance(a_anchor);
         const auto formID = a_actor.GetFormID();
-        const auto enabled = IsEnabledFor(_settings, a_actor);
         const auto actorRestricted = ActorRestrictions::IsRagdollOrTeleportBlocked(a_actor);
         const auto triggerDistance = a_maxLength * _settings.distanceMultiplier;
         const auto* process = a_actor.GetActorRuntimeData().currentProcess;
@@ -200,7 +198,7 @@ namespace LeashFramework::Recovery {
         }
 
         if (a_actor.IsDead(true)) {
-            if (a_actor.IsPlayerRef() || !enabled || actorRestricted || a_actor.IsInKillMove()) {
+            if (a_actor.IsPlayerRef() || !a_enabled || actorRestricted || a_actor.IsInKillMove()) {
                 Release(a_state);
                 return false;
             }
@@ -240,7 +238,7 @@ namespace LeashFramework::Recovery {
         }
 
         if (a_state.mode == Mode::kInactive) {
-            if (!RagdollHold::IsAvailable() || !enabled || distance <= triggerDistance || !CanRequestRagdoll(a_actor)) {
+            if (!RagdollHold::IsAvailable() || !a_enabled || distance <= triggerDistance || !CanRequestRagdoll(a_actor)) {
                 return false;
             }
             // Give the leash tick a frame to release direct locomotion before requesting a knockdown
@@ -250,7 +248,7 @@ namespace LeashFramework::Recovery {
         }
 
         if (a_state.mode == Mode::kRecovering) {
-            if (a_state.pullEventSent && !a_state.interruptingGetUp && enabled && distance > a_maxLength &&
+            if (a_state.pullEventSent && !a_state.interruptingGetUp && a_enabled && distance > a_maxLength &&
                 a_actor.AsActorState()->GetKnockState() == RE::KNOCK_STATE_ENUM::kGetUp && CanRequestRagdoll(a_actor, true)) {
                 // This continues our existing pull episode; a failed interruption must not restart itself every recovery tick...
                 a_state = State{.mode = Mode::kRequestingRagdoll, .pullEventSent = true, .interruptingGetUp = true};
@@ -266,13 +264,13 @@ namespace LeashFramework::Recovery {
 
         if (a_state.mode == Mode::kCooldown) {
             a_state.modeElapsed += a_deltaTime;
-            if (!enabled || actorRestricted || a_state.modeElapsed >= kRagdollRetryCooldown) {
+            if (!a_enabled || actorRestricted || a_state.modeElapsed >= kRagdollRetryCooldown) {
                 Release(a_state);
             }
             return false;
         }
 
-        if (!enabled || actorRestricted || a_actor.IsInKillMove() || a_actor.AsActorState()->GetLifeState() != RE::ACTOR_LIFE_STATE::kAlive ||
+        if (!a_enabled || actorRestricted || a_actor.IsInKillMove() || a_actor.AsActorState()->GetLifeState() != RE::ACTOR_LIFE_STATE::kAlive ||
             a_actor.GetActorRuntimeData().boolBits.any(RE::Actor::BOOL_BITS::kParalyzed)) {
             if (!a_state.requestIssued) {
                 Release(a_state);

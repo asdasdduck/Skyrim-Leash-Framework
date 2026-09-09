@@ -15,7 +15,6 @@ namespace LeashFramework {
         constexpr std::string_view kPluginName = "Leash.esm";
         constexpr RE::FormID kLeashedFactionFormID = 0xD6A;
         constexpr RE::FormID kLeasherFactionFormID = 0xD6B;
-        constexpr RE::FormID kPlayerFormID = 0x14;
 
         void SendLeashEvent(const char* a_eventName, const char* a_reason, RE::FormID a_leashedFormID) {
             auto* leashed = RE::TESForm::LookupByID<RE::Actor>(a_leashedFormID);
@@ -87,7 +86,7 @@ namespace LeashFramework {
     void LeashManager::SetRecoverySettings(Recovery::ForcedRecoverySettings a_settings) {
         _recoveryController.SetSettings(a_settings);
         for (auto& leash : _leashes) {
-            if (!(leash->GetDefinition().leashedFormID == kPlayerFormID ? a_settings.enablePlayer : a_settings.enableNPCs)) {
+            if (!leash->IsRagdollEnabled()) {
                 leash->ReleaseRecovery();
             }
         }
@@ -427,6 +426,23 @@ namespace LeashFramework {
             return false;
         }
         (*leash)->SetMaxLength(a_length);
+        return true;
+    }
+
+    bool LeashManager::SetRagdollOverride(RE::Actor* a_leashed, std::int32_t a_mode) { return SetOverride(a_leashed, a_mode, &LeashInstance::SetRagdollOverride); }
+
+    bool LeashManager::SetTeleportOverride(RE::Actor* a_leashed, std::int32_t a_mode) { return SetOverride(a_leashed, a_mode, &LeashInstance::SetTeleportOverride); }
+
+    bool LeashManager::SetOverride(RE::Actor* a_leashed, std::int32_t a_mode, void (LeashInstance::*a_setter)(std::optional<bool>)) {
+        if (!a_leashed || a_mode < -1 || a_mode > 1) {
+            return false;
+        }
+        const auto formID = a_leashed->GetFormID();
+        const auto leash = std::ranges::find_if(_leashes, [&](const auto& a_leash) { return a_leash->GetDefinition().leashedFormID == formID; });
+        if (leash == _leashes.end()) {
+            return false;
+        }
+        ((*leash).get()->*a_setter)(a_mode == -1 ? std::nullopt : std::optional<bool>{a_mode == 1});
         return true;
     }
 

@@ -25,6 +25,9 @@ namespace LeashFramework {
         [[nodiscard]] const LeashDefinition& GetDefinition() const;
         void SetMinLength(float a_length) noexcept;
         void SetMaxLength(float a_length) noexcept;
+        void SetRagdollOverride(std::optional<bool> a_enabled);
+        void SetTeleportOverride(std::optional<bool> a_enabled);
+        [[nodiscard]] bool IsRagdollEnabled() const;
         bool ReleasePull();
         bool ReleaseRecovery();
         bool ReleaseControl();

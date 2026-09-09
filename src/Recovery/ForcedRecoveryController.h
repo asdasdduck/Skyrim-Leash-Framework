@@ -38,7 +38,8 @@ namespace LeashFramework::Recovery {
             bool interruptingGetUp{};
         };
 
-        [[nodiscard]] bool Update(State& a_state, RE::Actor& a_actor, const RE::NiPoint3& a_collarAnchor, const RE::NiPoint3& a_anchor, const RE::NiPoint3& a_source, float a_maxLength, float a_deltaTime);
+        [[nodiscard]] bool Update(State& a_state, RE::Actor& a_actor, const RE::NiPoint3& a_collarAnchor, const RE::NiPoint3& a_anchor, const RE::NiPoint3& a_source, float a_maxLength, float a_deltaTime,
+            bool a_enabled);
         bool Release(State& a_state);
         void BeginRecovery(State& a_state);
         void BeginCooldown(State& a_state);

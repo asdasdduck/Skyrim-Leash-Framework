@@ -58,7 +58,7 @@ namespace LeashFramework {
             state = {};
             return false;
         }
-        if (definition.minLength > kFollowHandlingDisabledMinLength) {
+        if (!definition.overrides.teleport.value_or(true) || definition.minLength > kFollowHandlingDisabledMinLength) {
             state = {};
             return false;
         }
@@ -89,7 +89,7 @@ namespace LeashFramework {
             state = {};
             return UpdateResult::kNone;
         }
-        if (definition.minLength > kFollowHandlingDisabledMinLength) {
+        if (!definition.overrides.teleport.value_or(true) || definition.minLength > kFollowHandlingDisabledMinLength) {
             state = {};
             return UpdateResult::kNone;
         }
@@ -115,10 +115,14 @@ namespace LeashFramework {
             state.pendingPlayerPosition = false;
             return UpdateResult::kTeleported;
         }
-        const auto teleportDistance = leashed->IsPlayerRef() ? _settings.playerDistance : _settings.npcDistance;
+        auto teleportDistance = leashed->IsPlayerRef() ? _settings.playerDistance : _settings.npcDistance;
         if (teleportDistance <= 0.0F) {
-            state = {};
-            return UpdateResult::kNone;
+            if (!definition.overrides.teleport.value_or(false)) {
+                state = {};
+                return UpdateResult::kNone;
+            }
+            const LeashTeleportSettings defaults;
+            teleportDistance = leashed->IsPlayerRef() ? defaults.playerDistance : defaults.npcDistance;
         }
         state.cooldownRemaining = std::max(state.cooldownRemaining - a_deltaTime, 0.0F);
 

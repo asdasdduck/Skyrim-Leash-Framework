@@ -102,6 +102,29 @@ namespace LeashFramework {
 
     void LeashInstance::SetMaxLength(float a_length) noexcept { _definition.maxLength = a_length; }
 
+    void LeashInstance::SetRagdollOverride(std::optional<bool> a_enabled) {
+        _definition.overrides.ragdoll = a_enabled;
+        if (!IsRagdollEnabled()) {
+            ReleaseRecovery();
+        }
+    }
+
+    void LeashInstance::SetTeleportOverride(std::optional<bool> a_enabled) {
+        if (_definition.overrides.teleport != a_enabled) {
+            _definition.overrides.teleport = a_enabled;
+            _teleportState = {};
+        }
+    }
+
+    bool LeashInstance::IsRagdollEnabled() const {
+        const auto leashed = _leashed.get();
+        if (!leashed) {
+            return false;
+        }
+        const auto settings = _recoveryController.GetSettings();
+        return _definition.overrides.ragdoll.value_or(leashed->IsPlayerRef() ? settings.enablePlayer : settings.enableNPCs);
+    }
+
     bool LeashInstance::ReleasePull() {
         auto leashed = _leashed.get();
         return _pullController.Release(_pullState, leashed.get());
@@ -182,7 +205,8 @@ namespace LeashFramework {
         if (!a_allowForcedRecovery) {
             ReleaseRecovery();
         }
-        const auto forcedRecoveryActive = a_allowForcedRecovery && _recoveryController.Update(_recoveryState, *leashed, collarAnchor, leasherAnchor, pullGoal, _definition.maxLength, a_deltaTime);
+        const auto forcedRecoveryActive = a_allowForcedRecovery &&
+                                          _recoveryController.Update(_recoveryState, *leashed, collarAnchor, leasherAnchor, pullGoal, _definition.maxLength, a_deltaTime, IsRagdollEnabled());
         if (forcedRecoveryActive) {
             _pullController.Release(_pullState, leashed.get());
         } else {
