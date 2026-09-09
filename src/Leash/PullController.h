@@ -12,7 +12,7 @@ namespace LeashFramework {
         float minimumForcedPullRatio{0.5F};
         float maximumCatchUpSpeed{3.0F};
         float movingFollowGap{0.4F};
-        float distanceResponseRate{2.5F};
+        float distanceResponseRate{3.0F};
     };
 
     class LeashInstance;

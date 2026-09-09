@@ -108,7 +108,7 @@ namespace LeashFramework::UI::SettingsPage {
                 },
                 [&] {
                     Panel("Contact & snag release", "Fine-tune how the rope responds to obstacles.", [&] {
-                        Number("Collision padding", a_settings.collisionPadding, "Extra clearance around rope collision contacts.", 0.1F, 1.0F, "%.2f units");
+                        Number("Collision padding", a_settings.collisionPadding, "Extra clearance around rope collision contacts.", 0.1F, 2.0F, "%.2f units");
                         Number("Snag release strain", a_settings.snagReleaseStrain, "Segment stretch required before snag release can trigger.", 0.005F, 0.02F, "%.3f");
                         Number("Snag blocked distance", a_settings.snagBlockedDistance, "Minimum collision-blocked movement required for snag release.", 0.05F, 0.25F, "%.2f units");
                         Note("Actor collision and body shapes are in the Body collision tab.");

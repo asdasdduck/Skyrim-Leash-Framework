@@ -40,7 +40,7 @@ namespace LeashFramework::Physics {
         bool collideWithActors{true};
         ActorBodyCollisionSettings actorBodyCollision;
         float damping{0.985F};
-        float collisionPadding{0.2F};
+        float collisionPadding{1.0F};
         float stretchCompliance{1.0e-7F};
         float snagReleaseStrain{0.02F};
         float snagBlockedDistance{0.1F};
