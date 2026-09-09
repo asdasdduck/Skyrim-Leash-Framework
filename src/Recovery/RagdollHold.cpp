@@ -42,20 +42,18 @@ namespace LeashFramework::Recovery {
         if (installed) {
             return;
         }
-        if (!REL::Module::IsSE() && !REL::Module::IsAE()) {
-            SKSE::log::warn("Forced ragdoll recovery hooks are not implemented for Skyrim VR");
-            return;
-        }
 
-        // Todo: Find VR offsets, and newer AE
-        REL::Relocation<std::uintptr_t> npcCall{REL::VariantID(36370, 37361, 0), REL::VariantOffset(0x59, 0x6F, 0)};
-        REL::Relocation<std::uintptr_t> playerCall{REL::VariantID(39375, 40447, 0), REL::VariantOffset(0x7B8, 0xD31, 0)};
+        // Todo: Find newer AE offsets
+        REL::Relocation<std::uintptr_t> npcCall{REL::VariantID(36370, 37361, 0x5E1F10), REL::VariantOffset(0x59, 0x6F, 0x59)};
+        REL::Relocation<std::uintptr_t> playerCall{REL::VariantID(39375, 40447, 0x6BEC10), REL::VariantOffset(0x7B8, 0xD31, 0x808)};
         constexpr std::array<std::uint8_t, 5> expectedNPCSE{0xE8, 0x12, 0x40, 0x0A, 0x00};
         constexpr std::array<std::uint8_t, 5> expectedPlayerSE{0xE8, 0xC3, 0xEB, 0xFD, 0xFF};
         constexpr std::array<std::uint8_t, 5> expectedNPCAE{0xE8, 0xDC, 0x64, 0x0A, 0x00};
         constexpr std::array<std::uint8_t, 5> expectedPlayerAE{0xE8, 0x8A, 0xDC, 0xFD, 0xFF};
-        const auto& expectedNPCCode = REL::Module::IsAE() ? expectedNPCAE : expectedNPCSE;
-        const auto& expectedPlayerCode = REL::Module::IsAE() ? expectedPlayerAE : expectedPlayerSE;
+        constexpr std::array<std::uint8_t, 5> expectedNPCVR{0xE8, 0x12, 0x4E, 0x0A, 0x00};
+        constexpr std::array<std::uint8_t, 5> expectedPlayerVR{0xE8, 0x67, 0x79, 0xFC, 0xFF};
+        const auto& expectedNPCCode = REL::Module::IsVR() ? expectedNPCVR : REL::Module::IsAE() ? expectedNPCAE : expectedNPCSE;
+        const auto& expectedPlayerCode = REL::Module::IsVR() ? expectedPlayerVR : REL::Module::IsAE() ? expectedPlayerAE : expectedPlayerSE;
         if (!REL::verify_code(npcCall.address(), expectedNPCCode) || !REL::verify_code(playerCall.address(), expectedPlayerCode)) {
             SKSE::log::critical("Unexpected knockdown-update calls; forced ragdoll recovery is disabled");
             return;

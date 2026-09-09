@@ -62,18 +62,15 @@ namespace LeashFramework::Hooks {
 
     // Todo: AE 1799 or whatever version
     void FrameHook::InstallGreetingSuppressionHook() {
-        if (!REL::Module::IsSE() && !REL::Module::IsAE()) {
-            SKSE::log::warn("Greeting suppression hook is not implemented for VR");
-            return;
-        }
-
-        REL::Relocation<std::uintptr_t> callSite{REL::RelocationID(38601, 39632), 0x1C2};
+        REL::Relocation<std::uintptr_t> callSite{REL::VariantID(38601, 39632, 0x6679F0), REL::VariantOffset(0x1C2, 0x1C2, 0x1C2)};
 
         constexpr std::array<std::uint8_t, 5> expectedSE{0xE8, 0xD9, 0xB2, 0xC3, 0xFF};
 
         constexpr std::array<std::uint8_t, 5> expectedAE{0xE8, 0xB9, 0xC3, 0xBF, 0xFF};
 
-        const auto& expected = REL::Module::IsAE() ? expectedAE : expectedSE;
+        constexpr std::array<std::uint8_t, 5> expectedVR{0xE8, 0x89, 0x36, 0xC4, 0xFF};
+
+        const auto& expected = REL::Module::IsVR() ? expectedVR : REL::Module::IsAE() ? expectedAE : expectedSE;
 
         if (!REL::verify_code(callSite.address(), expected.data(), expected.size())) {
             SKSE::log::critical("Unexpected greeting-distance call");

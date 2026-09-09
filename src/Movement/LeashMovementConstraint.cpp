@@ -15,7 +15,7 @@ namespace LeashFramework::Movement {
         constexpr float kBrakingTime = 0.2F;     // Seconds of remaining slack used to cap outward speed; larger values brake earlier.
         constexpr float kMinimumSpeed = 0.5F;   // Constrained speeds below this many units/second become zero to prevent creeping.
 
-        // SE 1.5.97 / AE: controller slot 07 writes 0x1C bytes, not just CommonLib's NiPoint3.
+        // Controller slot 07 writes 0x1C bytes, not just CommonLib's NiPoint3.
         // Actor's movement update consumes these angles and speed before movement/animation feedback.
         struct NativeMovementOutput {
             RE::NiPoint3 directionAngles;
@@ -147,10 +147,6 @@ namespace LeashFramework::Movement {
 
     void InstallLeashMovementConstraint() {
         if (installed) {
-            return;
-        }
-        if (!REL::Module::IsSE() && !REL::Module::IsAE()) {
-            SKSE::log::warn("Native leash movement constraint is not implemented for VR");
             return;
         }
         REL::Relocation<std::uintptr_t> vtable{RE::VTABLE_MovementControllerNPC[0]};
