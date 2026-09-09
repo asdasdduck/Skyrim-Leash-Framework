@@ -5,6 +5,7 @@
 namespace LeashFramework::Hooks {
     struct FrameHookSettings {
         bool freeCameraWhileAIControlled{true};
+        bool suppressGreetingsWhileLeashed{true};
     };
 
     class FrameHook {

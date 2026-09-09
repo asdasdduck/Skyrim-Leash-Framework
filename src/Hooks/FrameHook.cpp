@@ -103,6 +103,6 @@ namespace LeashFramework::Hooks {
 
     float FrameHook::OverrideGreetingDistance(RE::TESObjectREFR* a_source, RE::Actor* a_target, bool a_ignoreDisabled, bool a_ignoreCell) {
         const float distanceSquared = _originalGreetingDistance(a_source, a_target, a_ignoreDisabled, a_ignoreCell);
-        return ShouldSuppressGreeting(a_target) ? (std::numeric_limits<float>::max)() : distanceSquared;
+        return _settings.suppressGreetingsWhileLeashed && ShouldSuppressGreeting(a_target) ? (std::numeric_limits<float>::max)() : distanceSquared;
     }
 }  // namespace LeashFramework::Hooks

@@ -987,6 +987,10 @@ namespace LeashFramework::UI::ModMenu {
             if (ImGuiMCP::IsItemHovered()) {
                 ImGuiMCP::SetTooltip("Allows the player to rotate the camera freely while AI Mode or forced walking controls their movement.");
             }
+            ImGuiMCP::Checkbox("Suppress greetings while leashed", &frameHook.suppressGreetingsWhileLeashed);
+            if (ImGuiMCP::IsItemHovered()) {
+                ImGuiMCP::SetTooltip("Suppresses greetings when the target actor or the player is leashed.");
+            }
             ImGuiMCP::Checkbox("Ragdoll NPCs", &recovery.enableNPCs);
             ImGuiMCP::Checkbox("Ragdoll Player", &recovery.enablePlayer);
             ImGuiMCP::SetNextItemWidth(ImGuiMCP::CalcItemWidth() * 0.4F);
