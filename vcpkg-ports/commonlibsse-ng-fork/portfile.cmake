@@ -28,6 +28,11 @@ vcpkg_cmake_config_fixup(PACKAGE_NAME CommonLibSSE CONFIG_PATH lib/cmake)
 vcpkg_copy_pdbs()
 
 file(INSTALL "${SOURCE_PATH2}/headers/openvr.h" DESTINATION ${CURRENT_PACKAGES_DIR}/include)
+file(INSTALL "${SOURCE_PATH2}/lib/win64/openvr_api.lib" DESTINATION ${CURRENT_PACKAGES_DIR}/lib)
+vcpkg_replace_string(
+    "${CURRENT_PACKAGES_DIR}/share/CommonLibSSE/CommonLibSSE/CommonLibSSE-targets.cmake"
+    "${SOURCE_PATH}/extern/openvr/lib/win64/openvr_api.lib"
+    "\${_IMPORT_PREFIX}/lib/openvr_api.lib")
 file(GLOB CMAKE_CONFIGS "${CURRENT_PACKAGES_DIR}/share/CommonLibSSE/CommonLibSSE/*.cmake")
 file(INSTALL ${CMAKE_CONFIGS} DESTINATION "${CURRENT_PACKAGES_DIR}/share/CommonLibSSE")
 file(INSTALL "${SOURCE_PATH}/cmake/CommonLibSSE.cmake" DESTINATION "${CURRENT_PACKAGES_DIR}/share/CommonLibSSE")

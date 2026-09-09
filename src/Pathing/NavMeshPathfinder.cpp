@@ -159,7 +159,7 @@ namespace LeashFramework::Pathing {
         [[nodiscard]] RE::BSNavmesh* ResolveNavMesh(RE::FormID a_formID) {
             auto* tes = RE::TES::GetSingleton();
             auto* runtimeData = tes ? std::addressof(tes->GetRuntimeData2()) : nullptr;
-            auto* info = runtimeData && runtimeData->unk2A8 ? runtimeData->unk2A8->GetNavmeshInfo(a_formID) : nullptr;
+            auto* info = runtimeData && runtimeData->navMeshInfoMap ? runtimeData->navMeshInfoMap->GetNavmeshInfo(a_formID) : nullptr;
             return info ? info->navMesh : nullptr;
         }
 
