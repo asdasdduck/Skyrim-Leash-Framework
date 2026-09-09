@@ -31,8 +31,8 @@ namespace LeashFramework::Hooks {
 
         auto& trampoline = SKSE::GetTrampoline();
         const auto address = REL::VariantID(35565, 36564, 0x5BAB10).address();
-        const auto frameUpdateOffset = REL::VariantOffset(0x748, 0xC26, 0x7EE).offset();
-        const auto lateFrameUpdateOffset = REL::VariantOffset(0x56D, 0x9DC, 0x611).offset();
+        const auto frameUpdateOffset = REL::VariantOffset(0x748, AE_OFFSET(0xC26, 0xC38), 0x7EE).offset();
+        const auto lateFrameUpdateOffset = REL::VariantOffset(0x56D, AE_OFFSET(0x9DC, 0x9EE), 0x611).offset();
         _originalFrameUpdate = trampoline.write_call<5>(address + frameUpdateOffset, OnFrameUpdate);
         _originalLateFrameUpdate = trampoline.write_call<5>(address + lateFrameUpdateOffset, OnLateFrameUpdate);
         InstallAIControlledCameraFreedomHook();
@@ -60,7 +60,6 @@ namespace LeashFramework::Hooks {
         SKSE::log::info("Installed AI-controlled camera freedom hook");
     }
 
-    // Todo: AE 1799 or whatever version
     void FrameHook::InstallGreetingSuppressionHook() {
         REL::Relocation<std::uintptr_t> callSite{REL::VariantID(38601, 39632, 0x6679F0), REL::VariantOffset(0x1C2, 0x1C2, 0x1C2)};
 
@@ -68,9 +67,11 @@ namespace LeashFramework::Hooks {
 
         constexpr std::array<std::uint8_t, 5> expectedAE{0xE8, 0xB9, 0xC3, 0xBF, 0xFF};
 
+        constexpr std::array<std::uint8_t, 5> expectedAE1799{0xE8, 0x79, 0xFD, 0xBE, 0xFF};
+
         constexpr std::array<std::uint8_t, 5> expectedVR{0xE8, 0x89, 0x36, 0xC4, 0xFF};
 
-        const auto& expected = REL::Module::IsVR() ? expectedVR : REL::Module::IsAE() ? expectedAE : expectedSE;
+        const auto& expected = REL::Module::IsVR() ? expectedVR : REL::Module::IsAE() ? AE_OFFSET(expectedAE, expectedAE1799) : expectedSE;
 
         if (!REL::verify_code(callSite.address(), expected.data(), expected.size())) {
             SKSE::log::critical("Unexpected greeting-distance call");

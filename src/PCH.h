@@ -3,6 +3,8 @@
 #include "RE/Skyrim.h"
 #include "SKSE/SKSE.h"
 
+#define AE_OFFSET(a_ae, a_ae1799) (REL::Module::get().version() >= REL::Version(1, 7, 99, 0) ? (a_ae1799) : (a_ae))
+
 #ifndef LF_ENABLE_PROFILING
 #define LF_ENABLE_PROFILING 0
 #endif
