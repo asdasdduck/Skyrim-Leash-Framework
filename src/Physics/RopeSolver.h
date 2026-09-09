@@ -26,6 +26,7 @@ namespace LeashFramework::Physics {
             RE::NiPoint3 planePoint;
             RE::NiPoint3 normal;
             ActorBodyCollision::ShapeKey actorShape;
+            RE::NiPoint3 surfaceDisplacement{};
             RE::NiPoint3 frictionCorrection{};
             float normalCorrection{};
             std::uint8_t missedQueries{};
@@ -43,6 +44,7 @@ namespace LeashFramework::Physics {
         std::vector<RE::NiPoint3> _substepStart;
         std::vector<RE::NiPoint3> _collisionStart;
         float _previousSubstepTime{};
+        float _actorSubstepFraction{};
         std::vector<float> _constraintMultipliers;
         std::vector<std::array<ContactConstraint, kMaximumContactConstraints>> _contactConstraints;
         std::vector<std::size_t> _contactConstraintCounts;

@@ -441,6 +441,7 @@ namespace LeashFramework {
         const auto suspendSimulation = _positioningPlayer || !std::isfinite(a_deltaTime) || a_deltaTime <= 0.0F || (RE::UI::GetSingleton()->GameIsPaused() || RE::Main::GetSingleton()->GetRuntimeData().freezeTime);
         if (suspendSimulation) {
             if (!_simulationSuspended) {
+                _actorBodyCollision.Clear();
                 for (auto& leash : _leashes) {
                     leash->FreezeSimulation();
                 }
@@ -458,6 +459,8 @@ namespace LeashFramework {
         if (_settings.collideWithActors && !_leashes.empty()) {
             _actorBodyCollision.Update(_settings.actorBodyCollision);
             actorCollision = &_actorBodyCollision;
+        } else {
+            _actorBodyCollision.Clear();
         }
         // Only put poses in here after their leash has ticked. Since the list is sorted, actors farther down the train can use the pose their holder just prepared
         std::unordered_map<RE::FormID, LeashInstance*> preparedPoses;

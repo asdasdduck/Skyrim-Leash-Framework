@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "../UI/DebugOverlay.h"
+#include "ActorShapeSweep.h"
 
 namespace LeashFramework::Physics {
     namespace {
@@ -18,9 +19,9 @@ namespace LeashFramework::Physics {
         constexpr float kMinimumBoneSpan = 0.01F;
         constexpr float kMinimumQueryRadius = 0.01F;
         constexpr float kMinimumShapeRadius = 0.5F;
-        constexpr float kMinimumMovementSquared = 0.0001F;
         constexpr float kDirectionEpsilon = 0.0001F;
         constexpr float kPrimitiveSwitchDistance = 0.25F;
+        constexpr float kMaximumInterpolatedMovement = 128.0F;
         constexpr float kHalfPi = 1.57079632679F;
         constexpr std::size_t kDebugRingSteps = 16;
         constexpr std::size_t kDebugCapSteps = 8;
@@ -177,24 +178,28 @@ namespace LeashFramework::Physics {
     }
 
     std::optional<ActorBodyCollision::Hit> ActorBodyCollision::FindDeepestOverlap(const RE::bhkWorld* a_world, const RE::NiPoint3& a_position, float a_radius, float a_interpolation,
-        std::span<const ShapeKey> a_preferredShapes) const {
+        std::span<const ShapeKey> a_preferredShapes, float a_contactDistance) const {
         LF_PROFILE_SCOPE("Collision/ActorBodies/Overlap");
         const auto interpolation = std::clamp(a_interpolation, 0.0F, 1.0F);
         const auto queryRadius = (std::max)(a_radius, kMinimumQueryRadius);
-        const auto queryMinimum = a_position - RE::NiPoint3{queryRadius, queryRadius, queryRadius};
-        const auto queryMaximum = a_position + RE::NiPoint3{queryRadius, queryRadius, queryRadius};
+        const auto boundsRadius = queryRadius + (std::max)(0.0F, a_contactDistance);
+        const auto queryMinimum = a_position - RE::NiPoint3{boundsRadius, boundsRadius, boundsRadius};
+        const auto queryMaximum = a_position + RE::NiPoint3{boundsRadius, boundsRadius, boundsRadius};
         std::optional<Hit> result;
         std::optional<Hit> preferredResult;
 
-        const auto consider = [&](const RE::NiPoint3& a_start, const RE::NiPoint3& a_end, float a_shapeRadius, const ShapeKey& a_shape) {
-            const auto segment = a_end - a_start;
-            const auto segmentLengthSquared = segment.SqrLength();
-            const auto segmentFraction = segmentLengthSquared > kMinimumBoneSpan * kMinimumBoneSpan ? std::clamp((a_position - a_start).Dot(segment) / segmentLengthSquared, 0.0F, 1.0F) : 0.0F;
-            const auto closestPoint = a_start + segment * segmentFraction;
-            auto normal = a_position - closestPoint;
+        const auto consider = [&](const ActorShapeSweep::Shape& a_previous, const ActorShapeSweep::Shape& a_current, const ShapeKey& a_shape) {
+            const auto start = Interpolate(a_previous.start - a_position, a_current.start - a_position, interpolation);
+            const auto end = Interpolate(a_previous.end - a_position, a_current.end - a_position, interpolation);
+            const auto shapeRadius = std::lerp(a_previous.radius, a_current.radius, interpolation);
+            const auto segment = end - start;
+            const auto segmentLengthSquared = ActorShapeSweep::Dot(segment, segment);
+            const auto segmentFraction = segmentLengthSquared > kMinimumBoneSpan * kMinimumBoneSpan ? static_cast<float>(std::clamp(-ActorShapeSweep::Dot(start, segment) / segmentLengthSquared, 0.0, 1.0)) : 0.0F;
+            const auto closestPoint = start + segment * segmentFraction;
+            auto normal = -closestPoint;
             const auto distance = normal.Length();
-            const auto combinedRadius = queryRadius + a_shapeRadius;
-            if (distance >= combinedRadius) {
+            const auto combinedRadius = queryRadius + shapeRadius;
+            if (distance >= combinedRadius + a_contactDistance) {
                 return;
             }
             if (distance > kDirectionEpsilon) {
@@ -210,7 +215,8 @@ namespace LeashFramework::Physics {
             }
 
             const auto penetration = combinedRadius - distance;
-            const Hit hit{.shape = a_shape, .normal = normal, .penetration = penetration};
+            const auto surfaceDisplacement = Interpolate(a_current.start - a_previous.start, a_current.end - a_previous.end, segmentFraction) + normal * (a_current.radius - a_previous.radius);
+            const Hit hit{.shape = a_shape, .normal = normal, .surfaceDisplacement = surfaceDisplacement, .penetration = penetration};
             if (!result || penetration > result->penetration) {
                 result = hit;
             }
@@ -227,7 +233,7 @@ namespace LeashFramework::Physics {
             if (!body) {
                 continue;
             }
-            const auto* previousBody = actor.hasPreviousBody ? std::addressof(_previousBodies[actor.previousBodyIndex].body) : nullptr;
+            const auto* previousBody = GetPreviousBody(actor, *body);
             auto bodyMinimum = body->bounds.minimum;
             auto bodyMaximum = body->bounds.maximum;
             if (previousBody) {
@@ -240,97 +246,47 @@ namespace LeashFramework::Physics {
             for (std::size_t index = 0; index < body->capsuleCount; ++index) {
                 const auto& capsule = body->capsules[index];
                 const auto* previous = previousBody && index < previousBody->capsuleCount ? std::addressof(previousBody->capsules[index]) : nullptr;
-                const auto start = previous ? Interpolate(previous->start, capsule.start, interpolation) : capsule.start;
-                const auto end = previous ? Interpolate(previous->end, capsule.end, interpolation) : capsule.end;
-                const auto radius = previous ? std::lerp(previous->radius, capsule.radius, interpolation) : capsule.radius;
-                consider(start, end, radius, {.actorFormID = actor.formID, .shapeIndex = static_cast<std::uint8_t>(index)});
+                const auto& old = previous ? *previous : capsule;
+                consider({old.start, old.end, old.radius}, {capsule.start, capsule.end, capsule.radius}, {.actorFormID = actor.formID, .shapeIndex = static_cast<std::uint8_t>(index)});
             }
             for (std::size_t index = 0; index < body->sphereCount; ++index) {
                 const auto& sphere = body->spheres[index];
                 const auto* previous = previousBody && index < previousBody->sphereCount ? std::addressof(previousBody->spheres[index]) : nullptr;
-                const auto center = previous ? Interpolate(previous->center, sphere.center, interpolation) : sphere.center;
-                const auto radius = previous ? std::lerp(previous->radius, sphere.radius, interpolation) : sphere.radius;
-                consider(center, center, radius, {.actorFormID = actor.formID, .shapeIndex = static_cast<std::uint8_t>(Body::kMaximumCapsules + index)});
+                const auto& old = previous ? *previous : sphere;
+                consider({old.center, old.center, old.radius}, {sphere.center, sphere.center, sphere.radius},
+                    {.actorFormID = actor.formID, .shapeIndex = static_cast<std::uint8_t>(Body::kMaximumCapsules + index)});
             }
         }
-        if (result && preferredResult && result->penetration - preferredResult->penetration <= kPrimitiveSwitchDistance) {
+        if (result && preferredResult && (preferredResult->penetration > 0.0F || result->penetration <= 0.0F) && result->penetration - preferredResult->penetration <= kPrimitiveSwitchDistance) {
             return preferredResult;
         }
         return result;
     }
 
-    std::optional<ActorBodyCollision::Hit> ActorBodyCollision::SweepSphere(const RE::bhkWorld* a_world, const RE::NiPoint3& a_from, const RE::NiPoint3& a_to, float a_radius, float a_interpolation,
-        std::span<const ShapeKey> a_preferredShapes) const {
+    std::optional<ActorBodyCollision::Hit> ActorBodyCollision::SweepSphere(const RE::bhkWorld* a_world, const RE::NiPoint3& a_from, const RE::NiPoint3& a_to, float a_radius,
+        float a_startInterpolation, float a_endInterpolation) const {
         LF_PROFILE_SCOPE("Collision/ActorBodies/Sweep");
-        const auto movement = a_to - a_from;
-        const auto movementLengthSquared = movement.SqrLength();
-        if (movementLengthSquared < kMinimumMovementSquared) {
-            return std::nullopt;
-        }
-
         const auto queryRadius = (std::max)(a_radius, kMinimumQueryRadius);
         const auto radiusVector = RE::NiPoint3{queryRadius, queryRadius, queryRadius};
         const auto queryMinimum = Minimum(a_from, a_to) - radiusVector;
         const auto queryMaximum = Maximum(a_from, a_to) + radiusVector;
+        const auto startInterpolation = std::clamp(a_startInterpolation, 0.0F, 1.0F);
+        const auto endInterpolation = std::clamp(a_endInterpolation, startInterpolation, 1.0F);
         std::optional<Hit> result;
-        std::optional<Hit> preferredResult;
-        const auto interpolation = std::clamp(a_interpolation, 0.0F, 1.0F);
-        const auto movementLength = std::sqrt(movementLengthSquared);
 
-        const auto consider = [&](const RE::NiPoint3& a_start, const RE::NiPoint3& a_end, float a_shapeRadius, const ShapeKey& a_shape) {
-            const auto combinedRadius = queryRadius + a_shapeRadius;
-            const auto combinedRadiusSquared = combinedRadius * combinedRadius;
-            const auto recordHit = [&](const RE::NiPoint3& a_normal, float a_fraction) {
-                const Hit hit{.shape = a_shape, .normal = a_normal, .fraction = a_fraction};
-                if (!result || a_fraction < result->fraction) {
-                    result = hit;
-                }
-                if (IsPreferred(a_preferredShapes, a_shape) && (!preferredResult || a_fraction < preferredResult->fraction)) {
-                    preferredResult = hit;
-                }
-            };
-            auto considerSphere = [&](const RE::NiPoint3& a_center) {
-                const auto offset = a_from - a_center;
-                const auto projection = offset.Dot(movement);
-                const auto discriminant = projection * projection - movementLengthSquared * (offset.SqrLength() - combinedRadiusSquared);
-                if (discriminant < 0.0F) {
-                    return;
-                }
-                const auto fraction = (-projection - std::sqrt(discriminant)) / movementLengthSquared;
-                if (fraction < 0.0F || fraction > 1.0F) {
-                    return;
-                }
-                auto normal = a_from + movement * fraction - a_center;
-                if (normal.Unitize() <= kDirectionEpsilon || normal.Dot(movement) >= 0.0F) {
-                    return;
-                }
-                recordHit(normal, fraction);
-            };
-
-            const auto axis = a_end - a_start;
-            const auto axisLengthSquared = axis.SqrLength();
-            if (axisLengthSquared > kMinimumBoneSpan * kMinimumBoneSpan) {
-                const auto origin = a_from - a_start;
-                const auto axisMovement = axis.Dot(movement);
-                const auto axisOrigin = axis.Dot(origin);
-                const auto coefficientA = axisLengthSquared * movementLengthSquared - axisMovement * axisMovement;
-                const auto coefficientB = axisLengthSquared * origin.Dot(movement) - axisOrigin * axisMovement;
-                const auto coefficientC = axisLengthSquared * origin.SqrLength() - axisOrigin * axisOrigin - combinedRadiusSquared * axisLengthSquared;
-                const auto discriminant = coefficientB * coefficientB - coefficientA * coefficientC;
-                if (coefficientA > kDirectionEpsilon && discriminant >= 0.0F) {
-                    const auto fraction = (-coefficientB - std::sqrt(discriminant)) / coefficientA;
-                    const auto axisPosition = axisOrigin + fraction * axisMovement;
-                    if (fraction >= 0.0F && fraction <= 1.0F && axisPosition > 0.0F && axisPosition < axisLengthSquared) {
-                        auto normal = origin + movement * fraction - axis * (axisPosition / axisLengthSquared);
-                        if (normal.Unitize() > kDirectionEpsilon && normal.Dot(movement) < 0.0F) {
-                            recordHit(normal, fraction);
-                        }
-                    }
-                }
-            }
-            considerSphere(a_start);
-            if (axisLengthSquared > kMinimumBoneSpan * kMinimumBoneSpan) {
-                considerSphere(a_end);
+        const auto consider = [&](const ActorShapeSweep::Shape& a_previous, const ActorShapeSweep::Shape& a_current, const ShapeKey& a_shape) {
+            const auto previousStart = a_previous.start - a_from;
+            const auto previousEnd = a_previous.end - a_from;
+            const auto currentStart = a_current.start - a_from;
+            const auto currentEnd = a_current.end - a_from;
+            const ActorShapeSweep::Shape previous{Interpolate(previousStart, currentStart, startInterpolation), Interpolate(previousEnd, currentEnd, startInterpolation),
+                std::lerp(a_previous.radius, a_current.radius, startInterpolation)};
+            const ActorShapeSweep::Shape current{Interpolate(previousStart, currentStart, endInterpolation), Interpolate(previousEnd, currentEnd, endInterpolation),
+                std::lerp(a_previous.radius, a_current.radius, endInterpolation)};
+            const auto hit = ActorShapeSweep::Cast({}, a_to - a_from, queryRadius, previous, current);
+            if (hit && (!result || hit->fraction < result->fraction)) {
+                const auto surfaceDisplacement = Interpolate(a_current.start - a_previous.start, a_current.end - a_previous.end, hit->axisFraction) + hit->normal * (a_current.radius - a_previous.radius);
+                result = Hit{.shape = a_shape, .normal = hit->normal, .surfaceDisplacement = surfaceDisplacement, .fraction = hit->fraction};
             }
         };
 
@@ -342,7 +298,7 @@ namespace LeashFramework::Physics {
             if (!body) {
                 continue;
             }
-            const auto* previousBody = actor.hasPreviousBody ? std::addressof(_previousBodies[actor.previousBodyIndex].body) : nullptr;
+            const auto* previousBody = GetPreviousBody(actor, *body);
             auto bodyMinimum = body->bounds.minimum;
             auto bodyMaximum = body->bounds.maximum;
             if (previousBody) {
@@ -354,24 +310,42 @@ namespace LeashFramework::Physics {
             }
             for (std::size_t index = 0; index < body->capsuleCount; ++index) {
                 const auto& capsule = body->capsules[index];
-                const auto* previous = previousBody && index < previousBody->capsuleCount ? std::addressof(previousBody->capsules[index]) : nullptr;
-                const auto start = previous ? Interpolate(previous->start, capsule.start, interpolation) : capsule.start;
-                const auto end = previous ? Interpolate(previous->end, capsule.end, interpolation) : capsule.end;
-                const auto radius = previous ? std::lerp(previous->radius, capsule.radius, interpolation) : capsule.radius;
-                consider(start, end, radius, {.actorFormID = actor.formID, .shapeIndex = static_cast<std::uint8_t>(index)});
+                const auto& previous = previousBody ? previousBody->capsules[index] : capsule;
+                consider({previous.start, previous.end, previous.radius}, {capsule.start, capsule.end, capsule.radius},
+                    {.actorFormID = actor.formID, .shapeIndex = static_cast<std::uint8_t>(index)});
             }
             for (std::size_t index = 0; index < body->sphereCount; ++index) {
                 const auto& sphere = body->spheres[index];
-                const auto* previous = previousBody && index < previousBody->sphereCount ? std::addressof(previousBody->spheres[index]) : nullptr;
-                const auto center = previous ? Interpolate(previous->center, sphere.center, interpolation) : sphere.center;
-                const auto radius = previous ? std::lerp(previous->radius, sphere.radius, interpolation) : sphere.radius;
-                consider(center, center, radius, {.actorFormID = actor.formID, .shapeIndex = static_cast<std::uint8_t>(Body::kMaximumCapsules + index)});
+                const auto& previous = previousBody ? previousBody->spheres[index] : sphere;
+                consider({previous.center, previous.center, previous.radius}, {sphere.center, sphere.center, sphere.radius},
+                    {.actorFormID = actor.formID, .shapeIndex = static_cast<std::uint8_t>(Body::kMaximumCapsules + index)});
             }
         }
-        if (result && preferredResult && (preferredResult->fraction - result->fraction) * movementLength <= kPrimitiveSwitchDistance) {
-            return preferredResult;
-        }
         return result;
+    }
+
+    const ActorBodyCollision::Body* ActorBodyCollision::GetPreviousBody(const ActorProxy& a_proxy, const Body& a_body) const {
+        if (!a_proxy.hasPreviousBody) {
+            return nullptr;
+        }
+        const auto& previous = _previousBodies[a_proxy.previousBodyIndex].body;
+        if (previous.capsuleCount != a_body.capsuleCount || previous.sphereCount != a_body.sphereCount) {
+            return nullptr;
+        }
+        const auto continuous = [](const RE::NiPoint3& a_previous, const RE::NiPoint3& a_current) {
+            return (a_current - a_previous).SqrLength() <= kMaximumInterpolatedMovement * kMaximumInterpolatedMovement;
+        };
+        for (std::size_t index = 0; index < a_body.capsuleCount; ++index) {
+            if (!continuous(previous.capsules[index].start, a_body.capsules[index].start) || !continuous(previous.capsules[index].end, a_body.capsules[index].end)) {
+                return nullptr;
+            }
+        }
+        for (std::size_t index = 0; index < a_body.sphereCount; ++index) {
+            if (!continuous(previous.spheres[index].center, a_body.spheres[index].center)) {
+                return nullptr;
+            }
+        }
+        return &previous;
     }
 
     void ActorBodyCollision::UpdateActor(RE::Actor* a_actor) {

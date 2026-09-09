@@ -23,6 +23,8 @@ namespace LeashFramework::Physics {
         struct Hit {
             ShapeKey shape;
             RE::NiPoint3 normal;
+            // Full animation-frame displacement; the rope solver scales this to its substep.
+            RE::NiPoint3 surfaceDisplacement{};
             float fraction{};
             float penetration{};
         };
@@ -31,9 +33,9 @@ namespace LeashFramework::Physics {
         void DrawDebug() const;
         void Clear();
         [[nodiscard]] std::optional<Hit> FindDeepestOverlap(const RE::bhkWorld* a_world, const RE::NiPoint3& a_position, float a_radius, float a_interpolation,
-            std::span<const ShapeKey> a_preferredShapes) const;
-        [[nodiscard]] std::optional<Hit> SweepSphere(const RE::bhkWorld* a_world, const RE::NiPoint3& a_from, const RE::NiPoint3& a_to, float a_radius, float a_interpolation,
-            std::span<const ShapeKey> a_preferredShapes) const;
+            std::span<const ShapeKey> a_preferredShapes, float a_contactDistance = 0.0F) const;
+        [[nodiscard]] std::optional<Hit> SweepSphere(const RE::bhkWorld* a_world, const RE::NiPoint3& a_from, const RE::NiPoint3& a_to, float a_radius, float a_startInterpolation,
+            float a_endInterpolation) const;
 
     private:
         enum class Bone : std::size_t { kSpine, kSpine1, kSpine2, kNeck, kTotal };
@@ -86,6 +88,7 @@ namespace LeashFramework::Physics {
 
         void UpdateActor(RE::Actor* a_actor);
         [[nodiscard]] const Body* GetBody(const ActorProxy& a_proxy) const;
+        [[nodiscard]] const Body* GetPreviousBody(const ActorProxy& a_proxy, const Body& a_body) const;
         [[nodiscard]] std::optional<Body> BuildBody(RE::Actor& a_actor, RE::NiAVObject& a_root) const;
         [[nodiscard]] static bool Intersects(const Bounds& a_bounds, const RE::NiPoint3& a_minimum, const RE::NiPoint3& a_maximum);
 

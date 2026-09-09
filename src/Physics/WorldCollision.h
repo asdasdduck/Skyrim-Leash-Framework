@@ -16,6 +16,7 @@ namespace LeashFramework::Physics {
             RE::NiPoint3 planePoint;
             RE::NiPoint3 normal;
             ActorBodyCollision::ShapeKey actorShape;
+            RE::NiPoint3 surfaceDisplacement{};
             bool movingSurface{};
         };
 
@@ -27,6 +28,6 @@ namespace LeashFramework::Physics {
         };
 
         [[nodiscard]] static Result ResolveMovement(RE::bhkWorld* a_world, const ActorBodyCollision* a_actorCollision, const RE::NiPoint3& a_from, const RE::NiPoint3& a_to, float a_radius,
-            float a_actorInterpolation, std::span<const ActorBodyCollision::ShapeKey> a_preferredActorShapes);
+            float a_actorStartInterpolation, float a_actorInterpolation, std::span<const ActorBodyCollision::ShapeKey> a_preferredActorShapes);
     };
 }  // namespace LeashFramework::Physics
