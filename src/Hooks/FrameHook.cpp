@@ -5,6 +5,14 @@
 #include "../PCH.h"
 #include "../Recovery/RagdollHold.h"
 
+/// <summary>
+/// Todo: Cleanup...
+/// - Rename this to Hooks, or similar. Not just framehooks now
+/// - Possibly centeralize all the offsets/vtable mappings to make it easier to manage versions
+/// 
+/// Notes:
+/// - I test bytes for some hooks that likely are being modified by other mods, or may be broken between SE->AE
+/// </summary>
 namespace LeashFramework::Hooks {
     namespace {
         float& deltaTimeStub = *reinterpret_cast<float*>(REL::VariantID(523660, 410199, 0x30C3A08).address());
