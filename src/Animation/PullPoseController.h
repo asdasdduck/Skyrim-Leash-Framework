@@ -55,6 +55,8 @@ namespace LeashFramework::Animation {
         };
 
         void Prepare(State& a_state, RE::Actor& a_actor, const RE::NiAVObject* a_attachmentNode, const RE::NiPoint3& a_attachment, const RE::NiPoint3& a_anchor, float a_ropeLength, float a_deltaTime, bool a_allowed);
+        [[nodiscard]] RE::NiPoint3 GetLeanLimitAttachment(const State& a_state, const RE::NiAVObject* a_attachmentNode,
+            const RE::NiPoint3& a_attachment, const RE::NiPoint3& a_anchor);
         void Transform(const State& a_state, const RE::NiAVObject& a_object, RE::NiPoint3& a_position, RE::NiMatrix3& a_rotation) const;
         void Capture(State& a_state, const RE::NiPoint3& a_collar, const RE::NiPoint3& a_nextRopePoint);
         void Apply(State& a_state, RE::Actor& a_actor);

@@ -6,6 +6,7 @@
 #include <string_view>
 
 #include "../Movement/DirectLocomotion.h"
+#include "../Movement/LeashMovementConstraint.h"
 #include "../PCH.h"
 #include "../Recovery/ForcedRecoveryController.h"
 #include "PullController.h"
@@ -133,6 +134,7 @@ namespace LeashFramework {
     bool LeashInstance::ReleaseRecovery() { return _recoveryController.Release(_recoveryState); }
 
     bool LeashInstance::ReleaseControl() {
+        Movement::ClearLeashMovementConstraint(_holderMovementBinding);
         const auto releasedPull = ReleasePull();
         const auto releasedRecovery = ReleaseRecovery();
         _pullPoseController.Reset(_pullPoseState);
@@ -221,6 +223,12 @@ namespace LeashFramework {
         }
         const auto* collarNode = holderOwnsMesh ? anchor->poseReference : _bones.front().get();
         _pullPoseController.Prepare(_pullPoseState, *leashed, collarNode, collarAnchor, poseLeasherAnchor, ropeLength, a_deltaTime, !forcedRecoveryActive);
+        if (holder && !forcedRecoveryActive && Movement::GetHolderMovementSettings().preventOverstretch) {
+            const auto leanLimitAttachment = _pullPoseController.GetLeanLimitAttachment(_pullPoseState, collarNode, collarAnchor, poseLeasherAnchor);
+            Movement::UpdateHolderMovementConstraint(_holderMovementBinding, *holder, poseLeasherAnchor, leanLimitAttachment, ropeLength);
+        } else {
+            Movement::ClearLeashMovementConstraint(_holderMovementBinding);
+        }
         auto posedNeutralPositions = _neutralPositions;
         auto posedNeutralRotations = _neutralRotations;
         // The actor wearing the leash can also be getting leaned by their own leash, so use that pose instead of pretending the mesh stayed where it was
@@ -257,12 +265,14 @@ namespace LeashFramework {
     }
 
     void LeashInstance::FreezeSimulation() {
+        Movement::ClearLeashMovementConstraint(_holderMovementBinding);
         _solver.Freeze();
         _pullController.ResetMotion(_pullState);
         _pullPoseController.Freeze(_pullPoseState);
     }
 
     void LeashInstance::ResetSimulation() {
+        Movement::ClearLeashMovementConstraint(_holderMovementBinding);
         _solver.Reset();
         _pullController.ResetMotion(_pullState);
         _pullPoseController.Reset(_pullPoseState);

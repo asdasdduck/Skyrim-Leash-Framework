@@ -66,6 +66,7 @@ namespace LeashFramework::UI::ModMenu {
         Physics::SimulationSettings simulation;
         Animation::PullPoseSettings pullPose;
         LocomotionSettings locomotion;
+        Movement::HolderMovementSettings holderMovement;
         Recovery::ForcedRecoverySettings recovery;
         LeashTeleportSettings teleport;
         DebugSettings debug;
@@ -120,6 +121,7 @@ namespace LeashFramework::UI::ModMenu {
             manager.SetSimulationSettings(a_settings.simulation);
             manager.SetPullPoseSettings(a_settings.pullPose);
             manager.SetLocomotionSettings(a_settings.locomotion);
+            Movement::SetHolderMovementSettings(a_settings.holderMovement);
             manager.SetRecoverySettings(a_settings.recovery);
             manager.SetTeleportSettings(a_settings.teleport);
             Hooks::FrameHook::SetSettings(a_settings.frameHook);
@@ -156,6 +158,7 @@ namespace LeashFramework::UI::ModMenu {
                 .simulation = manager.GetSimulationSettings(),
                 .pullPose = manager.GetPullPoseSettings(),
                 .locomotion = manager.GetLocomotionSettings(),
+                .holderMovement = Movement::GetHolderMovementSettings(),
                 .recovery = manager.GetRecoverySettings(),
                 .teleport = manager.GetTeleportSettings(),
                 .debug = debugSettings};
@@ -894,10 +897,11 @@ namespace LeashFramework::UI::ModMenu {
             auto simulation = manager.GetSimulationSettings();
             auto pullPose = manager.GetPullPoseSettings();
             auto locomotion = manager.GetLocomotionSettings();
+            auto holderMovement = Movement::GetHolderMovementSettings();
             auto recovery = manager.GetRecoverySettings();
             auto teleport = manager.GetTeleportSettings();
             auto frameHook = Hooks::FrameHook::GetSettings();
-            if (SettingsPage::Render({frameHook, simulation, pullPose, locomotion, recovery, teleport})) {
+            if (SettingsPage::Render({frameHook, simulation, pullPose, locomotion, holderMovement, recovery, teleport})) {
                 ApplySettings(ModMenuSettings{});
                 SaveSettings();
                 return;
@@ -905,6 +909,7 @@ namespace LeashFramework::UI::ModMenu {
             manager.SetSimulationSettings(std::move(simulation));
             manager.SetPullPoseSettings(pullPose);
             manager.SetLocomotionSettings(locomotion);
+            Movement::SetHolderMovementSettings(holderMovement);
             manager.SetRecoverySettings(recovery);
             manager.SetTeleportSettings(teleport);
             Hooks::FrameHook::SetSettings(frameHook);

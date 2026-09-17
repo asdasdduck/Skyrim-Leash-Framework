@@ -68,6 +68,17 @@ namespace LeashFramework::UI::SettingsPage {
                             "pull/release thresholds or world anchors.");
                         Slider("Distance response rate", movement.distanceResponseRate, 0.1F, 10.0F, "Higher values close the gap faster. Arrival braking and maximum catch-up speed still apply.");
                     }, Defaults(movement));
+                    auto& holderMovement = a_settings.holderMovement;
+                    Panel("Holder movement", "Keep metal chains from stretching as the holder walks away.", [&] {
+                        Toggle("Prevent holder overstretch", holderMovement.preventOverstretch,
+                            "Limit player and NPC holder movement at the chain's actual length plus the leashed actor's maximum procedural lean. "
+                            "Movement toward the actor or around the leash limit remains available. Every held leash contributes a limit.");
+                        ImGuiMCP::BeginDisabled(!holderMovement.preventOverstretch);
+                        Slider("Holder stretch allowance", holderMovement.stretchAllowance, -150.0F, 150.0F,
+                            "Adjust the holder's movement limit in Skyrim units. Positive values allow extra extension; negative values restrict movement earlier. Zero keeps the normal limit.", "%.0f units");
+                        ImGuiMCP::EndDisabled();
+                        Note("When leaning is disabled or unavailable, the limit uses chain length plus the allowance. Does not constrain the holder during forced recovery.");
+                    }, Defaults(holderMovement));
                 },
                 [&] {
                     auto& pose = a_settings.pose;

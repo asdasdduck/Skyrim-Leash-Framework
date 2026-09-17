@@ -204,6 +204,36 @@ namespace LeashFramework::Animation {
         }
     }
 
+    RE::NiPoint3 PullPoseController::GetLeanLimitAttachment(const State& a_state, const RE::NiAVObject* a_attachmentNode,
+        const RE::NiPoint3& a_attachment, const RE::NiPoint3& a_anchor) {
+        if (!_settings.enabled || !a_attachmentNode || !a_state.root || std::ranges::contains(a_state.bones, nullptr)) {
+            return a_attachment;
+        }
+
+        State limit;
+        limit.bones = a_state.bones;
+        limit.smoothedDirection = a_anchor - a_attachment;
+        if (limit.smoothedDirection.Unitize() <= kDirectionEpsilon) {
+            return a_attachment;
+        }
+        auto bestAttachment = a_attachment;
+        auto bestDistanceSquared = (a_attachment - a_anchor).SqrLength();
+        // Sample the same pose model without changing the smoothed pose that will be applied this frame.
+        for (std::size_t sample = 1; sample <= kStrengthSamples; ++sample) {
+            limit.prepared = false;
+            BuildPose(limit, a_attachment, _settings.maximumStrength * static_cast<float>(sample) / static_cast<float>(kStrengthSamples));
+            auto position = a_attachment;
+            auto rotation = a_attachmentNode->world.rotate;
+            Transform(limit, *a_attachmentNode, position, rotation);
+            const auto distanceSquared = (position - a_anchor).SqrLength();
+            if (distanceSquared < bestDistanceSquared) {
+                bestDistanceSquared = distanceSquared;
+                bestAttachment = position;
+            }
+        }
+        return bestAttachment;
+    }
+
     void PullPoseController::Transform(const State& a_state, const RE::NiAVObject& a_object, RE::NiPoint3& a_position, RE::NiMatrix3& a_rotation) const {
         if (!a_state.prepared) {
             return;

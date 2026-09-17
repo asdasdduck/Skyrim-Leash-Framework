@@ -56,6 +56,7 @@ namespace LeashFramework {
         PullController::State _pullState;
         Recovery::ForcedRecoveryController::State _recoveryState;
         Animation::PullPoseController::State _pullPoseState;
+        RE::MovementControllerNPC* _holderMovementBinding{};
         LeashTeleportController::State _teleportState;
         RE::ActorHandle _holder;
         RE::ActorHandle _leashed;
